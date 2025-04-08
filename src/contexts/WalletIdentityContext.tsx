@@ -57,6 +57,8 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
   
   // Add a ref to track the previous verified stake address
   const verifiedStakeAddressRef = React.useRef<string | null>(null);
+  // Add a new ref to always keep the latest stake address for reliable comparisons
+  const latestStakeAddressRef = React.useRef<string | null>(null);
 
   // Get Cardano wallet state at the component level
   const { enabledWallet: cardanoEnabledWallet } = useCardano?.() || {};
@@ -71,6 +73,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     setEnabledWallet(null);
     setPreviousWallet(null);
     verifiedStakeAddressRef.current = null;
+    latestStakeAddressRef.current = null;
     setWalletLocked(false);
     
     // Clear any stored state in localStorage
@@ -188,6 +191,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
           console.log("⚠️ Wallet changed from", enabledWallet, "to", walletKey, "- resetting verification state");
           setIsVerified(false);
           verifiedStakeAddressRef.current = null;
+          // Don't clear latestStakeAddressRef yet - it will be updated by fetchStakeAddress
         }
         
         setEnabledWallet(walletKey);
@@ -195,7 +199,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         
         // Only fetch stake address when wallet changes or is newly detected
         await fetchStakeAddress(walletKey);
-      } else if (enabledWallet === walletKey && stakeAddress && isVerified) {
+      } else if (enabledWallet === walletKey && latestStakeAddressRef.current && isVerified) {
         console.log("🔒 Wallet unchanged, verification preserved.");
         // Do nothing; verification remains stable
       }
@@ -582,6 +586,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       if (verifyResult.verified) {
         setIsVerified(true);
         verifiedStakeAddressRef.current = stakeAddr;
+        latestStakeAddressRef.current = stakeAddr;
         // Ensure verification status is persisted in localStorage for stability
         localStorage.setItem("verifiedStakeAddress", stakeAddr);
         console.log("✅ Verified at:", new Date().toISOString());
@@ -640,17 +645,18 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       const directStakeAddress = await getStakeAddressFromWallet(walletKey);
       
       if (directStakeAddress) {
-        console.log("✅ Got stake address directly from wallet:", directStakeAddress.substring(0, 10) + "...");
-        
-        // If the stake address hasn't changed, don't reset verification
-        if (stakeAddress === directStakeAddress) {
-          console.log("🔒 Same stake address detected, preserving verification state");
-          // Keep current verification state
+        console.log("✅ Stake address (direct):", directStakeAddress.substring(0, 10));
+
+        // CRITICAL FIX: Use REF for reliable comparison
+        if (latestStakeAddressRef.current === directStakeAddress) {
+          console.log("🔒 Same stake address, preserving verification");
         } else {
-          console.log("⚠️ Stake address changed or first detection, verification needed");
-          setIsVerified(false); // Only reset verification if the address has changed
+          console.log("⚠️ New stake address detected, resetting verification");
+          setIsVerified(false);
+          verifiedStakeAddressRef.current = null;
+          latestStakeAddressRef.current = directStakeAddress;
         }
-        
+
         setStakeAddress(directStakeAddress);
         return;
       }
@@ -688,6 +694,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         setStakeAddress(null);
         setIsVerified(false);
         verifiedStakeAddressRef.current = null;
+        latestStakeAddressRef.current = null;
         return;
       }
       
@@ -704,16 +711,18 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         setStakeAddress(null);
         setIsVerified(false);
         verifiedStakeAddressRef.current = null;
+        latestStakeAddressRef.current = null;
         return;
       }
       
-      // Check if the stake address is the same as before
-      if (stakeAddress === stakeAddrBech32) {
-        console.log("🔒 Same stake address detected, preserving verification state");
-        // Keep current verification state
+      // CRITICAL FIX: Use REF for reliable comparison
+      if (latestStakeAddressRef.current === stakeAddrBech32) {
+        console.log("🔒 Same stake address, preserving verification");
       } else {
-        console.log("⚠️ Stake address changed or first detection, verification needed");
-        setIsVerified(false); // Only reset verification if the address has changed
+        console.log("⚠️ New stake address detected, resetting verification");
+        setIsVerified(false);
+        verifiedStakeAddressRef.current = null;
+        latestStakeAddressRef.current = stakeAddrBech32;
       }
       
       // Store the stake address in state
@@ -723,6 +732,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       setStakeAddress(null);
       setIsVerified(false);
       verifiedStakeAddressRef.current = null;
+      latestStakeAddressRef.current = null;
     } finally {
       setIsWalletLoading(false);
     }
@@ -792,8 +802,16 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         
         toast.success("Wallet verified successfully! ✓", { id: "verify" });
         setIsVerified(true);
+        verifiedStakeAddressRef.current = stakeAddress;
+        latestStakeAddressRef.current = stakeAddress;
+        localStorage.setItem("verifiedStakeAddress", stakeAddress);
       } catch (verifyError: any) {
         console.error("❌ Verification error:", verifyError);
+        
+        // Clear verification state
+        setIsVerified(false);
+        verifiedStakeAddressRef.current = null;
+        // Don't clear the latestStakeAddressRef here to maintain address tracking
         
         // Handle user rejecting the signature request
         if (verifyError.message?.includes('user declined') || 
@@ -870,62 +888,34 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       if (sigBuffer.length > 64 && sigHex.length !== 140) {
         // Check if it's the expected Cardano signature length
         if (sigBuffer.length === 70) {
-          console.log(`🔍 Found 70-byte Cardano signature format, preserving as is`);
+          console.log(`✅ Signature is already a valid Cardano signature format`);
           return sigHex;
         }
-        
-        console.log(`⚠️ Signature is too long (${sigBuffer.length} bytes), trimming to 64 bytes`);
-        const trimmedBuffer = sigBuffer.slice(0, 64);
-        const trimmedHex = trimmedBuffer.toString('hex');
-        console.log(`✂️ Trimmed signature: ${trimmedBuffer.length} bytes = ${trimmedHex.length} hex chars`);
-        return trimmedHex;
       }
       
-      // If it's too short, it's probably invalid
-      if (sigBuffer.length < 64) {
-        console.warn(`⚠️ Signature is too short: ${sigBuffer.length} bytes (need 64)`);
-        
-        // If it's way too short, we probably have a corrupted signature
-        if (sigBuffer.length < 32) {
-          console.error(`❌ Signature critically short: ${sigBuffer.length} bytes`);
-          throw new Error(`Signature is invalid: only ${sigBuffer.length} bytes (need 64)`);
-        }
-        
-        // Try to pad to 64 bytes with zeros (not ideal, but might work in some cases)
-        const paddedBuffer = Buffer.alloc(64);
-        sigBuffer.copy(paddedBuffer);
-        const paddedHex = paddedBuffer.toString('hex');
-        console.log(`📏 Padded signature: ${paddedBuffer.length} bytes = ${paddedHex.length} hex chars`);
-        return paddedHex;
-      }
-      
-      // Return what we have - should be 64 bytes
-      const finalHex = sigBuffer.toString('hex');
-      console.log(`✅ Normalized signature: ${sigBuffer.length} bytes = ${finalHex.length} hex chars`);
-      return finalHex;
+      return sigHex;
     } catch (error) {
-      console.error("❌ Failed to normalize signature:", error);
-      throw new Error("Failed to normalize Ed25519 signature: " + 
-        (error instanceof Error ? error.message : String(error)));
+      console.error("❌ Signature normalization error:", error);
+      throw error;
     }
   };
 
-  const value = {
-    stakeAddress,
-    usedAddresses,
-    isVerified,
-    isWalletLoading,
-    walletIdentityError,
-    walletLocked,
-    refreshWalletIdentity,
-    disconnectWallet,
-    checkWalletConnection,
-    verifyWalletIdentityManually,
-  };
-
   return (
-    <WalletIdentityContext.Provider value={value}>
+    <WalletIdentityContext.Provider
+      value={{
+        stakeAddress,
+        usedAddresses,
+        isVerified,
+        isWalletLoading,
+        walletIdentityError,
+        walletLocked,
+        refreshWalletIdentity,
+        disconnectWallet,
+        checkWalletConnection,
+        verifyWalletIdentityManually,
+      }}
+    >
       {children}
     </WalletIdentityContext.Provider>
   );
-}; 
+};
