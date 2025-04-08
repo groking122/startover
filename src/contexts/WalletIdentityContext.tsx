@@ -19,6 +19,7 @@ interface WalletIdentityContextType {
   isVerified: boolean;
   isWalletLoading: boolean;
   walletIdentityError: string | null;
+  walletLocked: boolean;
   refreshWalletIdentity: () => Promise<void>;
   disconnectWallet: () => void;
   checkWalletConnection: () => Promise<void>;
@@ -31,6 +32,7 @@ const WalletIdentityContext = createContext<WalletIdentityContextType>({
   isVerified: false,
   isWalletLoading: false,
   walletIdentityError: null,
+  walletLocked: false,
   refreshWalletIdentity: async () => {},
   disconnectWallet: () => {},
   checkWalletConnection: async () => {},
@@ -45,6 +47,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
   const [isVerified, setIsVerified] = useState(false);
   const [isWalletLoading, setIsWalletLoading] = useState(false);
   const [walletIdentityError, setWalletIdentityError] = useState<string | null>(null);
+  const [walletLocked, setWalletLocked] = useState(false);
   
   // Use state to hold wallet connection info
   const [isConnected, setIsConnected] = useState(false);
@@ -68,6 +71,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     setEnabledWallet(null);
     setPreviousWallet(null);
     verifiedStakeAddressRef.current = null;
+    setWalletLocked(false);
     
     // Clear any stored state in localStorage
     localStorage.removeItem('last_connected_stake_address');
@@ -75,12 +79,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     
     console.log("Wallet disconnected, all state reset");
     
-    // Refresh the page to ensure clean state when connecting to a different wallet
-    if (typeof window !== 'undefined') {
-      setTimeout(() => {
-        window.location.reload();
-      }, 100);
-    }
+    // Remove the aggressive page reload - let React state handle UI updates
   }, []);
 
   // Add a useEffect to handle verification persistence
@@ -118,7 +117,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     }
   }, [isVerified, stakeAddress]);
 
-  // Check if the wallet is still connected and update state accordingly
+  // Modified checkWalletConnection with gentler reconnect logic
   const checkWalletConnection = useCallback(async () => {
     // Skip wallet checking if there's no window object (SSR)
     if (typeof window === 'undefined' || !window.cardano) {
@@ -144,17 +143,43 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         }
       }
       
-      if (!walletKey) {
-        // If we previously had a wallet but now don't, update the state
-        if (enabledWallet) {
-          console.log("🔍 No wallet detected, clearing state");
-          await disconnectWallet();
+      // If we have a previously enabled wallet but can't find it now
+      if (!walletKey && enabledWallet) {
+        console.log("🔍 Previously connected wallet not currently enabled");
+        
+        // Try to gently reconnect instead of immediately disconnecting
+        try {
+          if (window.cardano[enabledWallet]) {
+            console.log("🔌 Attempting to re-enable wallet:", enabledWallet);
+            await window.cardano[enabledWallet].enable();
+            
+            // Check if it's now enabled after our attempt
+            if (await isWalletEnabled(enabledWallet)) {
+              console.log("✅ Successfully reconnected to wallet");
+              walletKey = enabledWallet;
+              setWalletLocked(false);
+            } else {
+              console.log("⚠️ Wallet is likely locked but not disconnected");
+              setWalletLocked(true);
+              return; // Keep existing state, don't disconnect
+            }
+          } else {
+            console.log("⚠️ Wallet extension appears to be completely unavailable");
+            setWalletLocked(true);
+            return; // Keep existing state, don't disconnect
+          }
+        } catch (reconnectError) {
+          console.log("⚠️ Failed to reconnect to wallet, but not disconnecting:", reconnectError);
+          setWalletLocked(true);
+          return; // Keep existing state, don't disconnect
         }
-        return;
+      } else if (walletKey && walletLocked) {
+        // If we found a wallet and we previously thought it was locked, update state
+        setWalletLocked(false);
       }
       
       // If we found a new wallet or a different one from before
-      if (enabledWallet !== walletKey) {
+      if (enabledWallet !== walletKey && walletKey) {
         console.log("🔍 Wallet detected or changed, updating reference:", walletKey);
         
         // If wallet has changed, reset verification state
@@ -171,13 +196,10 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       }
     } catch (error) {
       console.error("Error checking wallet connection:", error);
-      // Reset state on error
-      setEnabledWallet(null);
-      setStakeAddress(null);
-      setIsVerified(false);
+      // Don't reset state on error to prevent aggressive disconnects
       setWalletIdentityError(error instanceof Error ? error.message : String(error));
     }
-  }, [enabledWallet, disconnectWallet]);
+  }, [enabledWallet, disconnectWallet, walletLocked]);
 
   // Safely get cardano wallet information using dynamic import and useEffect
   useEffect(() => {
@@ -868,6 +890,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     isVerified,
     isWalletLoading,
     walletIdentityError,
+    walletLocked,
     refreshWalletIdentity,
     disconnectWallet,
     checkWalletConnection,
