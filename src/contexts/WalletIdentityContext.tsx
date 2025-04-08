@@ -80,6 +80,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     console.log("Wallet disconnected, all state reset");
     
     // Remove the aggressive page reload - let React state handle UI updates
+    // If the user explicitly chooses to completely reset, offer a refresh button in the UI instead
   }, []);
 
   // Add a useEffect to handle verification persistence
@@ -145,7 +146,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       
       // If we have a previously enabled wallet but can't find it now
       if (!walletKey && enabledWallet) {
-        console.log("🔍 Previously connected wallet not currently enabled");
+        console.log("🔍 Previously connected wallet temporarily unavailable");
         
         // Try to gently reconnect instead of immediately disconnecting
         try {
@@ -178,9 +179,9 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         setWalletLocked(false);
       }
       
-      // If we found a new wallet or a different one from before
+      // Crucial change: Only fetch stake address if wallet has actually changed!
       if (enabledWallet !== walletKey && walletKey) {
-        console.log("🔍 Wallet detected or changed, updating reference:", walletKey);
+        console.log("🔍 Wallet changed or first detection, fetching stake address:", walletKey);
         
         // If wallet has changed, reset verification state
         if (enabledWallet && enabledWallet !== walletKey) {
@@ -192,14 +193,18 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         setEnabledWallet(walletKey);
         setPreviousWallet(walletKey);
         
-        await fetchStakeAddress(walletKey); // <– Make sure this is running!
+        // Only fetch stake address when wallet changes or is newly detected
+        await fetchStakeAddress(walletKey);
+      } else if (enabledWallet === walletKey && stakeAddress && isVerified) {
+        console.log("🔒 Wallet unchanged, verification preserved.");
+        // Do nothing; verification remains stable
       }
     } catch (error) {
       console.error("Error checking wallet connection:", error);
       // Don't reset state on error to prevent aggressive disconnects
       setWalletIdentityError(error instanceof Error ? error.message : String(error));
     }
-  }, [enabledWallet, disconnectWallet, walletLocked]);
+  }, [enabledWallet, disconnectWallet, walletLocked, stakeAddress, isVerified]);
 
   // Safely get cardano wallet information using dynamic import and useEffect
   useEffect(() => {
@@ -575,13 +580,17 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       
       // Update verification status based on API response (check verified field from response)
       if (verifyResult.verified) {
-      setIsVerified(true);
+        setIsVerified(true);
         verifiedStakeAddressRef.current = stakeAddr;
-        localStorage.setItem("verifiedStakeAddress", stakeAddr); // Store it for persistence
+        // Ensure verification status is persisted in localStorage for stability
+        localStorage.setItem("verifiedStakeAddress", stakeAddr);
         console.log("✅ Verified at:", new Date().toISOString());
+        console.log("✅ Verification status saved to localStorage for persistence");
       } else {
         setIsVerified(false);
         verifiedStakeAddressRef.current = null;
+        // Clear any existing verification data
+        localStorage.removeItem("verifiedStakeAddress");
         console.error("❌ Server returned success but verification status is not true");
       }
       
@@ -632,8 +641,17 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       
       if (directStakeAddress) {
         console.log("✅ Got stake address directly from wallet:", directStakeAddress.substring(0, 10) + "...");
+        
+        // If the stake address hasn't changed, don't reset verification
+        if (stakeAddress === directStakeAddress) {
+          console.log("🔒 Same stake address detected, preserving verification state");
+          // Keep current verification state
+        } else {
+          console.log("⚠️ Stake address changed or first detection, verification needed");
+          setIsVerified(false); // Only reset verification if the address has changed
+        }
+        
         setStakeAddress(directStakeAddress);
-        setIsVerified(false); // Still need to verify
         return;
       }
       
@@ -689,9 +707,17 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         return;
       }
       
+      // Check if the stake address is the same as before
+      if (stakeAddress === stakeAddrBech32) {
+        console.log("🔒 Same stake address detected, preserving verification state");
+        // Keep current verification state
+      } else {
+        console.log("⚠️ Stake address changed or first detection, verification needed");
+        setIsVerified(false); // Only reset verification if the address has changed
+      }
+      
       // Store the stake address in state
       setStakeAddress(stakeAddrBech32);
-      setIsVerified(false); // Need to verify first
     } catch (error) {
       console.error("Error fetching stake address:", error);
       setStakeAddress(null);
