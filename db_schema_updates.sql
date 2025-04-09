@@ -24,10 +24,27 @@ ON users
 FOR SELECT
 USING (auth.uid()::text = stake_address);
 
+-- Create policy to allow users to update their own data
+CREATE POLICY IF NOT EXISTS "Allow users to update their own data"
+ON users
+FOR UPDATE
+USING (auth.uid()::text = stake_address);
+
 -- Add payment_address column to users table if it doesn't exist
 ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_address text;
 
--- Add verified flag to messages table to track messages with direct signatures
+-- Create messages table if it doesn't exist
+CREATE TABLE IF NOT EXISTS messages (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  from text NOT NULL REFERENCES users(stake_address),
+  to text NOT NULL,
+  to_address text,
+  message text NOT NULL,
+  verified boolean DEFAULT false,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Add verified flag to messages table if it doesn't exist
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS verified boolean DEFAULT false;
 
 -- Add to_address column to messages table if it doesn't exist
@@ -64,10 +81,32 @@ WITH CHECK (
   )
 );
 
--- Create policy to allow select on messages
-CREATE POLICY IF NOT EXISTS "Allow select on messages"
+-- Create policy to allow users to view messages sent to them
+CREATE POLICY IF NOT EXISTS "Allow users to view messages sent to them"
 ON messages
 FOR SELECT
+USING (
+  messages.to = auth.uid()::text OR 
+  messages.from = auth.uid()::text
+);
+
+-- Create policy to allow users to update their own messages
+CREATE POLICY IF NOT EXISTS "Allow users to update their own messages"
+ON messages
+FOR UPDATE
+USING (messages.from = auth.uid()::text);
+
+-- Create policy to allow users to delete their own messages
+CREATE POLICY IF NOT EXISTS "Allow users to delete their own messages"
+ON messages
+FOR DELETE
+USING (messages.from = auth.uid()::text);
+
+-- Create policy to allow select on messages (for service role)
+CREATE POLICY IF NOT EXISTS "Allow service role to manage messages"
+ON messages
+FOR ALL
+TO service_role
 USING (true);
 
 -- Create cleanup function for old rate limits
@@ -82,4 +121,7 @@ $$ LANGUAGE plpgsql;
 -- Add index for faster message lookups (optional)
 CREATE INDEX IF NOT EXISTS messages_from_idx ON messages(from);
 CREATE INDEX IF NOT EXISTS messages_to_idx ON messages(to);
-CREATE INDEX IF NOT EXISTS users_stake_idx ON users(stake_address); 
+CREATE INDEX IF NOT EXISTS users_stake_idx ON users(stake_address);
+
+-- Add composite index for conversation lookup
+CREATE INDEX IF NOT EXISTS messages_conversation_idx ON messages(from, to); 

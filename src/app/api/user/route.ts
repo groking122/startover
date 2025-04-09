@@ -1,10 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import supabaseAdmin from '@/utils/supabaseClient';
 
 export async function POST(req: Request) {
   try {
@@ -21,7 +16,7 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('users')
       .upsert({ stake_address: stakeAddress }, { onConflict: 'stake_address' });
 
