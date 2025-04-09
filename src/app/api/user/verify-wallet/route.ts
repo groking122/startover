@@ -64,16 +64,18 @@ export async function POST(req: NextRequest) {
 
     // Step 1: Verify the signature is valid for the message using the public key
     try {
-      // Decode the original hex message back to JSON
-      const messageJson = fromHex(message);
-      console.log("Decoded message from HEX:", {
-        originalHexLength: message.length,
-        decodedJsonLength: messageJson.length,
-        decodedJsonPreview: messageJson.substring(0, 50) + '...'
+      // The message is already hex-encoded from frontend - use it directly
+      const messageHex = message;
+      const messageBytes = Buffer.from(messageHex, 'hex');
+      
+      console.log("Using original hex-encoded message bytes for verification:", {
+        messageHexLength: messageHex.length,
+        messageBytesLength: messageBytes.length,
+        messageHexPreview: messageHex.substring(0, 30) + "..."
       });
       
-      // Use our existing verification logic to check the signature
-      const isValidSignature = verifySignature(pubKey, signature, messageJson);
+      // Use our existing verification logic to check the signature with the hex bytes
+      const isValidSignature = verifySignature(pubKey, signature, messageBytes);
       
       if (!isValidSignature) {
         console.log('❌ Signature verification failed');

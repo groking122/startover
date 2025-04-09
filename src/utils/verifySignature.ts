@@ -11,10 +11,10 @@ import {
  * Verify a signature against a message using a public key
  * @param publicKeyHex The public key in hex format
  * @param signatureHex The signature in hex format
- * @param message The message that was signed (either original string or hex-encoded)
+ * @param message The message that was signed (string or Buffer)
  * @returns true if signature is valid, false otherwise
  */
-export function verifySignature(publicKeyHex: string, signatureHex: string, message: string): boolean {
+export function verifySignature(publicKeyHex: string, signatureHex: string, message: string | Buffer): boolean {
   try {
     // Validate input sizes first
     const pubKeyBuffer = Buffer.from(publicKeyHex, 'hex');
@@ -25,8 +25,11 @@ export function verifySignature(publicKeyHex: string, signatureHex: string, mess
       pubKeyByteLength: pubKeyBuffer.length,
       sigHexLength: signatureHex.length,
       sigByteLength: sigBuffer.length,
-      messageLength: message.length,
-      messagePreview: message.substring(0, 30) + "..."
+      messageType: typeof message,
+      messageLength: Buffer.isBuffer(message) ? message.length : message.length,
+      messagePreview: Buffer.isBuffer(message) 
+        ? message.toString('hex').substring(0, 30) + "..." 
+        : message.substring(0, 30) + "..."
     });
     
     // ED25519 public keys should be 32 bytes
@@ -47,12 +50,15 @@ export function verifySignature(publicKeyHex: string, signatureHex: string, mess
     // Parse the signature from hex
     const sig = Ed25519Signature.from_hex(signatureHex);
     
-    // For JSON messages, convert to string if it's an object
-    const messageToVerify = typeof message === 'object' ? JSON.stringify(message) : message;
-    
-    // Convert message to buffer - Cardano wallets expect hex format for signing
-    // If the message is already in hex format, we use it directly
-    const messageBuffer = Buffer.from(messageToVerify, 'utf8');
+    // Convert message to buffer if it's a string
+    let messageBuffer: Buffer;
+    if (Buffer.isBuffer(message)) {
+      messageBuffer = message;
+    } else {
+      // For JSON messages, convert to string if it's an object
+      const messageToVerify = typeof message === 'object' ? JSON.stringify(message) : message;
+      messageBuffer = Buffer.from(messageToVerify, 'utf8');
+    }
     
     // Verify the signature
     const result = pubKey.verify(messageBuffer, sig);
