@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import { ReactNode, useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import { Toaster } from 'react-hot-toast';
+import SessionExpiredModal from '../session/SessionExpiredModal';
 
 // Dynamically import the providers to avoid SSR errors
-const CardanoProvider = dynamic(
+const CardanoProviderDynamic = dynamic(
   () => import('./CardanoProvider'),
   { ssr: false }
 );
@@ -15,27 +17,31 @@ const WalletIdentityProviderClient = dynamic(
   { ssr: false }
 );
 
-export default function ClientOnlyWalletProviders({ children }: { children: React.ReactNode }) {
+interface ClientOnlyWalletProvidersProps {
+  children: ReactNode;
+}
+
+export default function ClientOnlyWalletProviders({ children }: ClientOnlyWalletProvidersProps) {
   const [mounted, setMounted] = useState(false);
 
-  // Ensure we're in the browser before rendering wallet-related components
+  // When mounted on client, now we can render
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // When not mounted yet (during SSR), render just the children
+  // If not mounted yet (server-side), render nothing
   if (!mounted) {
-    // The first render on the client happens before useEffect runs, 
-    // so we need to render a placeholder to avoid hydration errors
     return <>{children}</>;
   }
-
+  
   // Once mounted (client-side only), render the providers
   return (
-    <CardanoProvider>
+    <CardanoProviderDynamic>
       <WalletIdentityProviderClient>
+        <Toaster position="top-right" />
+        <SessionExpiredModal checkInterval={30000} />
         {children}
       </WalletIdentityProviderClient>
-    </CardanoProvider>
+    </CardanoProviderDynamic>
   );
 } 

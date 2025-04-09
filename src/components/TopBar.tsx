@@ -3,6 +3,7 @@
 import React from 'react';
 import dynamic from 'next/dynamic';
 import { useWalletIdentity } from '@/contexts/WalletIdentityContext';
+import SessionStatus from './session/SessionStatus';
 
 // Lazily load the wallet components with no SSR to avoid "window is not defined" errors
 const WalletComponents = dynamic(
@@ -46,7 +47,15 @@ const TopBar: React.FC<TopBarProps> = ({
       <div className="p-3 flex justify-between items-center">
         <h1 className="text-xl font-bold text-white">Cardano Chat</h1>
         
-        <div className="flex space-x-2">
+        <div className="flex space-x-2 items-center">
+          {/* Session status indicator */}
+          {isVerified && (
+            <div className="mr-3 flex items-center">
+              <span className="text-xs text-gray-400 mr-2">Session:</span>
+              <SessionStatus />
+            </div>
+          )}
+          
           {stakeAddress && (
             <>
               {isVerified && (

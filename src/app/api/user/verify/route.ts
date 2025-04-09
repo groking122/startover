@@ -14,10 +14,11 @@ const supabase = createClient(
 );
 
 export async function POST(request: NextRequest) {
-  const { message, signature, pubKey, requestedMethod } = await request.json();
+  const { message, signature, pubKey, publicAddress } = await request.json();
   console.log("Message received:", message);
   console.log("Signature:", signature);
   console.log("Public Key:", pubKey);
+  console.log("Public Address:", publicAddress);
 
   try {
     console.log("Starting signature verification...");
@@ -25,36 +26,36 @@ export async function POST(request: NextRequest) {
     let isValid = false;
     let validMethod = "";
     
-    // Parse message to extract payment address if it exists
+    // Parse message to extract addresses if they exist
     let messageObj: any = {};
-    let stakeAddress = '';
-    let paymentAddress = '';
+    let publicAddr = publicAddress || ''; // From request body
     
     try {
       messageObj = JSON.parse(message);
-      stakeAddress = messageObj.stakeAddress || '';
-      paymentAddress = messageObj.paymentAddress || '';
       
-      // Log extracted addresses
-      console.log("Extracted from message:");
-      console.log("- Stake address:", stakeAddress ? `${stakeAddress.substring(0, 10)}...` : 'none');
-      console.log("- Payment address:", paymentAddress ? `${paymentAddress.substring(0, 10)}...` : 'none');
+      // Check for public address in message - prioritize this one
+      if (messageObj.publicAddress) {
+        publicAddr = messageObj.publicAddress;
+      }
       
-      // Fall back to URL parameter if not in message
-      if (!stakeAddress) {
-        stakeAddress = request.nextUrl.searchParams.get('stakeAddress') || '';
-        console.log("Using stake address from URL:", stakeAddress ? `${stakeAddress.substring(0, 10)}...` : 'none');
+      // Log extracted address
+      console.log("- Public address:", publicAddr ? `${publicAddr.substring(0, 10)}...` : 'none');
+      
+      // Fall back to URL parameter for public address if not in message or request body
+      if (!publicAddr) {
+        publicAddr = request.nextUrl.searchParams.get('publicAddress') || '';
+        console.log("Using public address from URL:", publicAddr ? `${publicAddr.substring(0, 10)}...` : 'none');
       }
     } catch (err) {
       console.error("Error parsing message:", err);
-      // If can't parse the message, try to get stakeAddress from URL
-      stakeAddress = request.nextUrl.searchParams.get('stakeAddress') || '';
-      console.log("Using stake address from URL (after parse error):", stakeAddress ? `${stakeAddress.substring(0, 10)}...` : 'none');
+      // If can't parse the message, try to get address from URL
+      publicAddr = request.nextUrl.searchParams.get('publicAddress') || '';
+      console.log("Using public address from URL (after parse error):", publicAddr ? `${publicAddr.substring(0, 10)}...` : 'none');
     }
     
     // Rate limit verification attempts
-    if (stakeAddress) {
-      const rateLimitKey = `verify_${stakeAddress}`;
+    if (publicAddr) {
+      const rateLimitKey = `verify_${publicAddr}`;
       const { data: rateLimit } = await supabase
         .from('rate_limits')
         .select('timestamp')
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
         const now = Date.now();
         // Only allow verification once every 10 seconds
         if (now - lastVerify < 10000) {
-          console.log("⏳ Rate limiter activated for:", stakeAddress);
+          console.log("⏳ Rate limiter activated for:", publicAddr);
           return NextResponse.json({
             verified: false,
             error: "Please wait before attempting to verify again",
@@ -210,12 +211,14 @@ export async function POST(request: NextRequest) {
     console.log("Final verification result:", isValid);
     
     if (isValid) {
-      // Check if we have a valid stake address
-      if (!stakeAddress || !stakeAddress.startsWith('stake1')) {
-        console.error("Invalid stake address:", stakeAddress);
+      // Validate public address format
+      const hasValidPublicAddress = publicAddr && (publicAddr.startsWith('addr1') || publicAddr.startsWith('addr_test1'));
+      
+      if (!hasValidPublicAddress) {
+        console.error("No valid public address provided:", publicAddr);
         return NextResponse.json({ 
           verified: false,
-          error: "Invalid stake address"
+          error: "No valid public address provided. Public addresses must start with 'addr1' or 'addr_test1'."
         }, { status: 400 });
       }
       
@@ -225,19 +228,16 @@ export async function POST(request: NextRequest) {
         
         // Prepare user data
         const userData: any = {
-          stake_address: stakeAddress,
           public_key: pubKey,
-          last_verified: new Date().toISOString()
+          last_verified: new Date().toISOString(),
+          public_address: publicAddr
         };
         
-        // Add payment address if available
-        if (paymentAddress) {
-          userData.payment_address = paymentAddress;
-        }
+        console.log(`Upserting user with public_address:`, publicAddr);
         
         const { error } = await supabase
           .from('users')
-          .upsert(userData, { onConflict: 'stake_address' });
+          .upsert(userData, { onConflict: 'public_address' });
 
         if (error) {
           console.error("Database error:", error);
@@ -249,37 +249,35 @@ export async function POST(request: NextRequest) {
           });
         }
         
-        // Store verification in localStorage on client side
-        console.log("User verified and saved in database:", stakeAddress);
+        console.log("User record updated successfully");
         
-        return NextResponse.json({
-          verified: true,
-          method: validMethod,
-          stakeAddress: stakeAddress,
-          paymentAddress: paymentAddress || null,
-          message: "Signature verified successfully!"
+        // Return success response
+        return NextResponse.json({ 
+          verified: true, 
+          publicAddress: publicAddr,
+          method: validMethod 
         });
       } catch (dbError) {
-        console.error("Error saving to database:", dbError);
-        // Return a partial success if verification worked but DB failed
-        return NextResponse.json({
-          verified: true,
+        console.error("Database operation error:", dbError);
+        return NextResponse.json({ 
+          verified: true, 
           method: validMethod,
-          message: "Signature verified successfully, but could not update database",
-          error: dbError instanceof Error ? dbError.message : "Unknown database error"
+          message: "Signature verified successfully, but database operation failed",
+          error: dbError instanceof Error ? dbError.message : String(dbError)
         });
       }
     } else {
-      throw new Error("Signature verification failed with all methods");
+      return NextResponse.json({ 
+        verified: false, 
+        error: "Signature verification failed" 
+      }, { status: 401 });
     }
+    
   } catch (error) {
-    console.error("Error during verification:", error);
-    return NextResponse.json(
-      {
-        verified: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 400 }
-    );
+    console.error("Verification process error:", error);
+    return NextResponse.json({ 
+      verified: false, 
+      error: error instanceof Error ? error.message : "An unknown error occurred" 
+    }, { status: 500 });
   }
 } 

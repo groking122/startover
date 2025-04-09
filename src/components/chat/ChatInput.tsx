@@ -9,6 +9,8 @@ import {
   resolveToStakeAddress,
   convertStakeAddressHexToBech32
 } from '@/utils/client/stakeUtils';
+import { sendMessage } from '@/utils/messageApi';
+import { MessageApiError } from '@/types/messages';
 
 interface ChatInputProps {
   recipient: string;
@@ -105,76 +107,14 @@ export default function ChatInput({ recipient, onMessageSent }: ChatInputProps) 
         sender: stakeAddress
       });
       
-      // Prepare message data with proper addressing - NEVER truncate addresses
-      const messageData = {
-        from: stakeAddress,         // Full stake address (sender)
-        to: toStake,                // Full stake address (recipient) 
-        toAddress: isBase ? recipient : undefined, // Full base address when applicable
-        message,
-      };
-
-      console.log('Sending message with data:', {
-        from: messageData.from,
-        to: messageData.to,
-        toAddress: messageData.toAddress,
-        messageLength: message.length
+      // Send message using the messageApi utility
+      const response = await sendMessage({
+        to: toStake!,
+        message: message
       });
       
-      // Send the message to the API
-      const response = await fetch('/api/message', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(messageData),
-      });
-
-      let responseData;
-      let responseText = '';
+      console.log('Message sent successfully:', response);
       
-      try {
-        // Try to get the raw text first
-        responseText = await response.text();
-        console.log('Raw API response text:', responseText);
-        
-        // Then parse as JSON if possible
-        if (responseText && responseText.trim()[0] === '{') {
-          responseData = JSON.parse(responseText);
-        } else {
-          responseData = { error: 'Server returned non-JSON response' };
-        }
-      } catch (e) {
-        console.error('Failed to process response:', e);
-        console.error('Raw response text:', responseText.substring(0, 200));
-        responseData = { 
-          error: 'Could not parse server response',
-          rawResponse: responseText.substring(0, 100) + '...'
-        };
-      }
-      
-      console.log('API response status:', response.status, 'Response data:', responseData);
-      
-      if (!response.ok) {
-        console.error('Message sending failed with status:', response.status);
-        console.error('Error response:', responseData);
-        
-        // Check if it's an HTML response (server error)
-        if (responseText.includes('<!DOCTYPE') || responseText.includes('<html')) {
-          throw new Error('Server is experiencing issues. Please try again later.');
-        }
-        
-        // Provide more specific error messages based on response status
-        if (response.status === 401) {
-          throw new Error('Wallet verification required. Please verify your wallet again.');
-        } else if (response.status === 429) {
-          throw new Error('Sending too fast. Please wait a moment before sending another message.');
-        } else if (response.status === 502 || response.status === 503 || response.status === 504) {
-          throw new Error('Server is temporarily unavailable. Please try again later.');
-        } else {
-          throw new Error(responseData.error || 'Failed to send message');
-        }
-      }
-
       // Clear the input and show success message
       setMessage('');
       toast.success('Message sent successfully!');
@@ -185,7 +125,23 @@ export default function ChatInput({ recipient, onMessageSent }: ChatInputProps) 
       }
     } catch (error) {
       console.error('Error sending message:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to send message');
+      
+      // Handle specific API errors
+      if ((error as MessageApiError).error) {
+        const apiError = error as MessageApiError;
+        
+        // Check for rate limiting
+        if (apiError.retryAfter) {
+          const retryDate = new Date(apiError.retryAfter);
+          const waitTime = Math.ceil((retryDate.getTime() - Date.now()) / 1000);
+          
+          toast.error(`Rate limit exceeded. Please try again in ${waitTime} seconds.`);
+        } else {
+          toast.error(apiError.error);
+        }
+      } else {
+        toast.error(error instanceof Error ? error.message : 'Failed to send message');
+      }
     } finally {
       setLoading(false);
     }

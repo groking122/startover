@@ -1,0 +1,79 @@
+---
+description: Guidelines for working with buffer types (ArrayBuffer, Uint8Array) in TypeScript
+globs: **/*.ts
+---
+
+- **Buffer Type Compatibility**
+  - `ArrayBuffer` is the raw binary buffer
+  - `Uint8Array` is a view over an `ArrayBuffer` with additional methods
+  - The Web Crypto API methods have inconsistent type expectations across browsers
+  
+  ```typescript
+  // ✅ DO: Access Uint8Array underlying buffer properly
+  const buffer: ArrayBuffer = uint8Array.buffer;
+  
+  // ✅ DO: Create a detached copy of the buffer when needed
+  const detachedBuffer: ArrayBuffer = uint8Array.buffer.slice(
+    uint8Array.byteOffset,
+    uint8Array.byteOffset + uint8Array.byteLength
+  );
+  
+  // ❌ DON'T: Directly cast between Uint8Array and ArrayBuffer
+  const badCast = uint8Array as unknown as ArrayBuffer; // Type error at runtime
+  ```
+
+- **Web Crypto API Best Practices**
+  - Always ensure correct buffer types are passed to Web Crypto API methods
+  - Check method signatures carefully - some methods accept BufferSource, others require ArrayBuffer
+  
+  ```typescript
+  // ✅ DO: Match buffer types to method requirements
+  // For encrypt/decrypt, create utility functions that handle type conversion
+  const decryptData = async (data: ArrayBuffer, iv: ArrayBuffer, key: CryptoKey): Promise<ArrayBuffer> => {
+    return crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      data
+    );
+  };
+  
+  // ✅ DO: Create strong type conversion utilities
+  const toArrayBuffer = (buf: Uint8Array): ArrayBuffer => {
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  };
+  
+  // ❌ DON'T: Use TS ignore annotations with crypto functions
+  // @ts-ignore - This masks real type issues
+  ```
+
+- **Function Parameter Consistency**
+  - When creating utility functions for buffer conversion, maintain consistent types
+  - Clearly document expected input and output buffer types
+  
+  ```typescript
+  /**
+   * Converts a hex string to a Uint8Array
+   * @param hex Hexadecimal string to convert
+   * @returns Uint8Array containing the binary data
+   */
+  export const hexToUint8Array = (hex: string): Uint8Array => {
+    return new Uint8Array(
+      hex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
+    );
+  };
+  
+  /**
+   * Converts a hex string to an ArrayBuffer
+   * @param hex Hexadecimal string to convert
+   * @returns ArrayBuffer containing the binary data
+   */
+  export const hexToArrayBuffer = (hex: string): ArrayBuffer => {
+    const uint8Array = hexToUint8Array(hex);
+    return uint8Array.buffer.slice(uint8Array.byteOffset, uint8Array.byteOffset + uint8Array.byteLength);
+  };
+  ```
+
+- **Full File Analysis**
+  - When fixing buffer type errors, check all usage of similar functions throughout the file
+  - Buffer type errors often occur in pairs (e.g., both encrypt and decrypt functions)
+  - Note that functions like `bufToHex()` need consistent parameters across the codebase 

@@ -9,6 +9,7 @@ interface ChatMessageProps {
   senderName?: string;
   senderAddress?: string;
   walletAddress?: string;
+  isVerified?: boolean;
 }
 
 export default function ChatMessage({
@@ -17,7 +18,8 @@ export default function ChatMessage({
   isSender,
   senderName,
   senderAddress,
-  walletAddress
+  walletAddress,
+  isVerified = false
 }: ChatMessageProps) {
   // Pass base address information through to the MessageBubble component
   return (
@@ -28,6 +30,7 @@ export default function ChatMessage({
       senderName={senderName}
       senderAddress={senderAddress}
       walletAddress={walletAddress}
+      isVerified={isVerified}
     />
   );
 } 

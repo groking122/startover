@@ -10,6 +10,7 @@ interface MessageBubbleProps {
   senderName?: string;
   senderAddress?: string;
   walletAddress?: string;
+  isVerified?: boolean;
 }
 
 const formatTime = (ts: string) =>
@@ -21,7 +22,8 @@ export default function MessageBubble({
   isSender,
   senderName,
   senderAddress,
-  walletAddress
+  walletAddress,
+  isVerified = false
 }: MessageBubbleProps) {
   // Determine address type for display purposes
   const isBaseAddress = senderAddress?.startsWith('addr1') || senderAddress?.startsWith('addr_test1');
@@ -35,10 +37,17 @@ export default function MessageBubble({
       `}>
         {!isSender && (
           <div className="text-xs font-medium text-gray-500 mb-1">
-            {senderName || (senderAddress ? shorten(senderAddress) : "Unknown")}
-            {isBaseAddress && senderAddress && (
-              <span className="text-xs ml-1 text-gray-400">(Base Address)</span>
-            )}
+            <div className="flex items-center gap-1">
+              <span>{senderName || (senderAddress ? shorten(senderAddress) : "Unknown")}</span>
+              {isBaseAddress && senderAddress && (
+                <span className="text-xs ml-1 text-gray-400">(Base Address)</span>
+              )}
+              {isVerified && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                  ✓ Verified
+                </span>
+              )}
+            </div>
             {walletAddress && (
               <div className="text-xs text-gray-400">
                 {isBaseAddress ? "Sent from:" : "Wallet:"} {shorten(walletAddress)}
@@ -47,8 +56,18 @@ export default function MessageBubble({
           </div>
         )}
         <p>{message}</p>
-        <div className="text-xs text-gray-400 mt-1 text-right">
-          {formatTime(timestamp)} {isSender ? ' • You' : ''}
+        <div className="text-xs text-gray-400 mt-1 text-right flex justify-end items-center">
+          {formatTime(timestamp)}
+          {isSender ? (
+            <span className="ml-1">
+              {' • You '}
+              {isVerified && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-700 text-white ml-1">
+                  ✓ Verified
+                </span>
+              )}
+            </span>
+          ) : null}
         </div>
       </div>
     </div>

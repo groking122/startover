@@ -8,6 +8,7 @@ import Inbox from '@/components/chat/Inbox';
 import { toast } from 'react-hot-toast';
 import { isValidCardanoAddress } from '@/utils/client/stakeUtils';
 import ApiStatusChecker from './ApiStatusChecker';
+import VerifyWalletBanner from './VerifyWalletBanner';
 
 export default function HomeClient() {
   const [recipient, setRecipient] = useState<string>('');
@@ -69,11 +70,15 @@ export default function HomeClient() {
   return (
     <main className="flex flex-col h-screen bg-gray-900 text-white">
       <TopBar onRefreshConversations={handleRefreshConversations} />
+      <VerifyWalletBanner />
       
       <div className="flex-1 container mx-auto p-4 flex flex-col">
         {!stakeAddress ? (
           <div className="flex-1 flex flex-col items-center justify-center">
             <h1 className="text-3xl font-bold mb-4">Connect your wallet</h1>
+            <p className="text-gray-400 max-w-md text-center mb-8">
+              Connect your Cardano wallet to start sending and receiving messages securely.
+            </p>
           </div>
         ) : !isVerified ? (
           <div className="flex-1 flex flex-col items-center justify-center">

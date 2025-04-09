@@ -6,14 +6,18 @@ import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import { shorten } from '@/utils/format';
 import { toast } from 'react-hot-toast';
+import EmptyState from './EmptyState';
+import { getMessages, markAsRead } from '@/utils/messageApi';
 
 interface Message {
   id: string;
-  from: string;
-  to: string;
-  to_address?: string;
+  from_address: string;
+  to_address: string;
   message: string;
+  is_read: boolean;
   created_at: string;
+  signature?: string;
+  public_key?: string;
 }
 
 interface ChatContainerProps {
@@ -28,10 +32,11 @@ export default function ChatContainer({ recipientAddress, recipientName }: ChatC
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [messageCache, setMessageCache] = useState<Record<string, Message[]>>({});
-  const { stakeAddress } = useWalletIdentity();
+  const { stakeAddress, isVerified } = useWalletIdentity();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
   const [recipientWalletAddress, setRecipientWalletAddress] = useState<string | null>(null);
+  const [markingAsRead, setMarkingAsRead] = useState(false);
 
   // Function to fetch messages - wrapped in useCallback to prevent recreation on every render
   const fetchMessages = useCallback(async () => {
@@ -46,19 +51,9 @@ export default function ChatContainer({ recipientAddress, recipientName }: ChatC
     }
     
     try {
-      // Include the address type in the request for proper handling
-      const isBaseAddress = recipientAddress.startsWith('addr1') || recipientAddress.startsWith('addr_test1');
-      
-      const response = await fetch(
-        `/api/messages?sender=${stakeAddress}&recipient=${recipientAddress}`
-      );
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch messages');
-      }
-      
-      const data = await response.json();
-      const newMessages = data.messages || [];
+      // Use our messageApi utility to fetch messages
+      const result = await getMessages(recipientAddress);
+      const newMessages = result.messages || [];
       
       // Prevent unnecessary updates by checking if the messages have changed
       if (messageCache[recipientAddress] && 
@@ -70,27 +65,59 @@ export default function ChatContainer({ recipientAddress, recipientName }: ChatC
       setMessages(newMessages);
       setMessageCache(prev => ({ ...prev, [recipientAddress]: newMessages }));
       
-      // Look for recipient's wallet address in the messages
-      const receivedMessages = newMessages.filter((msg: Message) => {
-        if (isBaseAddress) {
-          // If recipient is a base address, use direct equality
-          return msg.from === recipientAddress || msg.to_address === recipientAddress;
-        } else {
-          // For stake addresses, compare against the 'from' field
-          return msg.from === recipientAddress;
-        }
-      });
-      
-      const walletAddressMsg = receivedMessages.find((msg: Message) => msg.to_address);
-      if (walletAddressMsg && walletAddressMsg.to_address) {
-        setRecipientWalletAddress(walletAddressMsg.to_address);
-      }
+      // Try to mark all unread messages in this conversation as read
+      await markMessagesAsRead(recipientAddress);
     } catch (error) {
       console.error('Error fetching messages:', error);
     } finally {
       setLoading(false);
     }
   }, [stakeAddress, recipientAddress, messageCache]);
+
+  // Function to mark all messages from a partner as read
+  const markMessagesAsRead = async (partnerId: string) => {
+    // Skip if already marking as read or not authenticated
+    if (markingAsRead || !stakeAddress || !isVerified) return;
+    
+    // Find unread messages from this partner
+    const unreadMessages = messages.filter(msg => 
+      msg.from_address === partnerId && 
+      msg.to_address === stakeAddress && 
+      !msg.is_read
+    );
+    
+    // Skip if no unread messages
+    if (unreadMessages.length === 0) return;
+    
+    setMarkingAsRead(true);
+    
+    try {
+      // Use our messageApi utility to mark messages as read
+      const result = await markAsRead({
+        partnerId: partnerId
+      });
+      
+      console.log(`Marked ${result.updatedCount} messages as read`);
+      
+      // Update the local message cache by marking messages as read
+      if (result.updatedCount > 0) {
+        const updatedMessages = messages.map(msg => {
+          if (msg.from_address === partnerId && msg.to_address === stakeAddress && !msg.is_read) {
+            return { ...msg, is_read: true };
+          }
+          return msg;
+        });
+        
+        // Update state and cache
+        setMessages(updatedMessages);
+        setMessageCache(prev => ({ ...prev, [recipientAddress]: updatedMessages }));
+      }
+    } catch (error) {
+      console.error('Error marking messages as read:', error);
+    } finally {
+      setMarkingAsRead(false);
+    }
+  };
 
   // Debounced fetch function for chat switching
   const debouncedFetch = useCallback(() => {
@@ -108,6 +135,9 @@ export default function ChatContainer({ recipientAddress, recipientName }: ChatC
     if (stakeAddress && recipientAddress && messageCache[recipientAddress]) {
       setMessages(messageCache[recipientAddress]);
       setLoading(false);
+      
+      // If we have cached messages and the recipient changes, mark messages as read
+      markMessagesAsRead(recipientAddress);
     }
   }, [recipientAddress, messageCache, stakeAddress]);
 
@@ -137,73 +167,14 @@ export default function ChatContainer({ recipientAddress, recipientName }: ChatC
 
   // Function to determine if a message is from the current user
   const isFromCurrentUser = useCallback((message: Message) => {
-    return message.from === stakeAddress;
+    return message.from_address === stakeAddress;
   }, [stakeAddress]);
 
-  // Add a method to directly fetch messages for debugging
-  const forceLoadMessages = async () => {
-    if (!stakeAddress || !recipientAddress) {
-      toast.error('Both sender and recipient addresses must be available');
-      return;
-    }
-    
-    setLoading(true);
-    toast.loading('Attempting to force load messages...', { id: 'force-load' });
-    
-    try {
-      console.log(`Directly fetching messages between ${stakeAddress} and ${recipientAddress}`);
-      
-      // Try to fetch messages with less restrictive parameters
-      const response = await fetch(
-        `/api/messages?sender=${stakeAddress}&recipient=${recipientAddress}`,
-        {
-          cache: 'no-store',
-          headers: { 'pragma': 'no-cache', 'cache-control': 'no-cache' }
-        }
-      );
-      
-      console.log('Messages API status:', response.status);
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('API error response:', errorText);
-        toast.dismiss('force-load');
-        throw new Error(`API error ${response.status}: ${errorText}`);
-      }
-      
-      // Get the raw response text first
-      const responseText = await response.text();
-      console.log('Raw API response:', responseText.substring(0, 200) + '...');
-      
-      // Try to parse the response
-      try {
-        const data = JSON.parse(responseText);
-        const newMessages = data.messages || [];
-        
-        console.log(`Found ${newMessages.length} messages`);
-        
-        if (newMessages.length > 0) {
-          setMessages(newMessages);
-          setMessageCache(prev => ({ ...prev, [recipientAddress]: newMessages }));
-          toast.dismiss('force-load');
-          toast.success(`Loaded ${newMessages.length} messages`, { id: 'force-load' });
-        } else {
-          toast.dismiss('force-load');
-          toast.success('No messages found in this conversation', { id: 'force-load' });
-        }
-      } catch (parseError) {
-        console.error('Failed to parse API response:', parseError);
-        toast.dismiss('force-load');
-        throw new Error('Invalid response format from server');
-      }
-    } catch (error) {
-      console.error('Error force loading messages:', error);
-      toast.dismiss('force-load');
-      toast.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, { id: 'force-load' });
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Handle new message sent
+  const handleMessageSent = useCallback(() => {
+    // Refresh messages after sending
+    fetchMessages();
+  }, [fetchMessages]);
 
   return (
     <div className="flex flex-col h-full">
@@ -226,7 +197,7 @@ export default function ChatContainer({ recipientAddress, recipientName }: ChatC
           {/* Only show Force Load button in development */}
           {showDebugFeatures && (
             <button
-              onClick={forceLoadMessages}
+              onClick={fetchMessages}
               className="text-xs bg-red-900 hover:bg-red-800 text-red-100 px-2 py-1 rounded"
               disabled={loading}
             >
@@ -247,27 +218,22 @@ export default function ChatContainer({ recipientAddress, recipientName }: ChatC
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {loading && messages.length === 0 ? (
           <div className="flex justify-center items-center h-full">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400">
-            <svg className="w-12 h-12 mb-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
-            </svg>
-            <p className="mb-2">No messages yet</p>
-            <p className="text-sm text-gray-500">Start the conversation by sending a message below</p>
-          </div>
+          <EmptyState type="no-messages" />
         ) : (
           <>
-            {messages.map((msg, index) => (
-              <ChatMessage 
-                key={msg.id || index}
-                content={msg.message}
-                timestamp={msg.created_at}
-                isSender={msg.from === stakeAddress}
-                senderName={msg.from === stakeAddress ? undefined : recipientName}
-                senderAddress={msg.from === stakeAddress ? undefined : msg.from}
-                walletAddress={msg.from !== stakeAddress && msg.to_address ? msg.to_address : undefined}
+            {messages.map((message) => (
+              <ChatMessage
+                key={message.id}
+                content={message.message}
+                timestamp={message.created_at}
+                isSender={isFromCurrentUser(message)}
+                senderName={isFromCurrentUser(message) ? "You" : shorten(message.from_address)}
+                senderAddress={message.from_address}
+                walletAddress={message.to_address}
+                isVerified={true} // Could be extended to check verification status
               />
             ))}
             <div ref={messagesEndRef} />
@@ -275,9 +241,9 @@ export default function ChatContainer({ recipientAddress, recipientName }: ChatC
         )}
       </div>
       
-      <ChatInput
-        recipient={recipientAddress}
-        onMessageSent={fetchMessages}
+      <ChatInput 
+        recipient={recipientAddress} 
+        onMessageSent={handleMessageSent}
       />
     </div>
   );

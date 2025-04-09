@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useReducer } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 // Don't import the cardano library directly at the top level
 // import { useCardano } from '@cardano-foundation/cardano-connect-with-wallet';
 import { PublicKey } from '@emurgo/cardano-serialization-lib-asmjs';
@@ -12,9 +12,10 @@ import { getAvailableWallets, isWalletEnabled } from '@/utils/walletUtils';
 import type * as CborModule from 'cbor';
 import { toast } from 'react-hot-toast';
 import { useCardano } from '@cardano-foundation/cardano-connect-with-wallet';
+import { createSession, getSession, clearSession } from '@/utils/sessionManager';
 
 interface WalletIdentityContextType {
-  stakeAddress: string | null;
+  publicAddress: string | null;  // Public address (payment address)
   usedAddresses: string[] | null;
   isVerified: boolean;
   isWalletLoading: boolean;
@@ -26,7 +27,7 @@ interface WalletIdentityContextType {
 }
 
 const WalletIdentityContext = createContext<WalletIdentityContextType>({
-  stakeAddress: null,
+  publicAddress: null,
   usedAddresses: null,
   isVerified: false,
   isWalletLoading: false,
@@ -40,7 +41,7 @@ const WalletIdentityContext = createContext<WalletIdentityContextType>({
 export const useWalletIdentity = () => useContext(WalletIdentityContext);
 
 export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
-  const [stakeAddress, setStakeAddress] = useState<string | null>(null);
+  const [publicAddress, setPublicAddress] = useState<string | null>(null);
   const [usedAddresses, setUsedAddresses] = useState<string[] | null>(null);
   const [isVerified, setIsVerified] = useState(false);
   const [isWalletLoading, setIsWalletLoading] = useState(false);
@@ -50,119 +51,130 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
   const [isConnected, setIsConnected] = useState(false);
   const [enabledWallet, setEnabledWallet] = useState<string | null>(null);
   const [previousWallet, setPreviousWallet] = useState<string | null>(null);
-  const [previousStakeAddress, setPreviousStakeAddress] = useState<string | null>(null);
-  
-  // Add a ref to track the previous verified stake address
-  const verifiedStakeAddressRef = React.useRef<string | null>(null);
-  
-  // Add paymentAddress tracking for security
-  const [paymentAddress, setPaymentAddress] = useState<string | null>(null);
   const [lastVerificationTime, setLastVerificationTime] = useState<Date | null>(null);
 
   // Get Cardano wallet state at the component level
   const { enabledWallet: cardanoEnabledWallet } = useCardano?.() || {};
 
-  // Disconnect the wallet and reset related state
-  const disconnectWallet = useCallback(() => {
-    setStakeAddress(null);
-    setUsedAddresses(null);
-    setPaymentAddress(null);
-    setPreviousStakeAddress(null);
-    setIsVerified(false);
-    setIsConnected(false);
-    setEnabledWallet(null);
-    setPreviousWallet(null);
-    verifiedStakeAddressRef.current = null;
-    setLastVerificationTime(null);
+  // Handle session retrieval on component mount
+  useEffect(() => {
+    const loadSession = async () => {
+      const session = await getSession();
+      if (session) {
+        setPublicAddress(session.publicAddress);
+        setIsVerified(true);
+        const verificationTime = new Date(session.verifiedAt);
+        setLastVerificationTime(verificationTime);
+      }
+    };
     
-    // Clear any stored state in localStorage
-    localStorage.removeItem('last_connected_stake_address');
-    localStorage.removeItem("verifiedStakeAddress"); // Clear verification cache
-    localStorage.removeItem("verificationTimestamp");
-    
-    console.log("Wallet disconnected, all state reset");
-    
-    // Refresh the page to ensure clean state when connecting to a different wallet
-    if (typeof window !== 'undefined') {
-      setTimeout(() => {
-        window.location.reload();
-      }, 100);
-    }
+    loadSession();
   }, []);
 
-  // Modified verification persistence with timestamp and expiration checks
+  // Set up wallet change event listener
   useEffect(() => {
-    if (!stakeAddress) return;
+    const handleWalletChange = () => {
+      console.log("Wallet change detected, refreshing state");
+      checkWalletConnection();
+    };
     
-    const cachedStakeAddress = localStorage.getItem("verifiedStakeAddress");
-    const cachedVerificationTimestamp = localStorage.getItem("verificationTimestamp");
+    window.addEventListener("cardano-wallet-change", handleWalletChange);
+    
+    return () => {
+      window.removeEventListener("cardano-wallet-change", handleWalletChange);
+    };
+  }, []);
 
-    if (cachedStakeAddress && cachedStakeAddress === stakeAddress && cachedVerificationTimestamp) {
-      // Check if the verification is still valid (less than 1 hour old)
-      const verificationTime = new Date(cachedVerificationTimestamp);
-      const now = new Date();
-      const elapsedMs = now.getTime() - verificationTime.getTime();
-      
-      // If verification is less than 1 hour old (3600000 ms)
-      if (elapsedMs < 3600000) {
-        setIsVerified(true);
-        verifiedStakeAddressRef.current = cachedStakeAddress;
-        setLastVerificationTime(verificationTime);
-        console.log("✅ Restored verification from cache (valid for", 
-          Math.round((3600000 - elapsedMs) / 60000), "more minutes)");
-      } else {
-        // Clear expired verification
-        console.log("❌ Found expired verification in cache, clearing");
-        localStorage.removeItem("verifiedStakeAddress");
-        localStorage.removeItem("verificationTimestamp");
-      }
-    }
-  }, [stakeAddress]);
-
-  // Update the ref when verification succeeds
+  // Check session expiry and wallet connection
   useEffect(() => {
-    if (isVerified && stakeAddress) {
-      verifiedStakeAddressRef.current = stakeAddress;
-      console.log("✅ Updated verified stake address reference:", 
-        stakeAddress.substring(0, 10) + '...');
+    const interval = setInterval(async () => {
+      const session = await getSession();
       
-      // Store verification with timestamp
-      localStorage.setItem("verifiedStakeAddress", stakeAddress);
-      localStorage.setItem("verificationTimestamp", new Date().toISOString());
-    }
-  }, [isVerified, stakeAddress]);
+      // If no session but we think we're verified, reset state
+      if (!session && isVerified) {
+        setIsVerified(false);
+      }
+      
+      // Check wallet connection if we don't have a connected wallet
+      if (!enabledWallet) {
+        checkWalletConnection();
+      }
+    }, 30000); // Check every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, [enabledWallet, isVerified]);
 
-  // Check if the wallet is still connected and update state accordingly
-  const checkWalletConnection = useCallback(async () => {
-    // Skip wallet checking if there's no window object (SSR)
-    if (typeof window === 'undefined' || !window.cardano) {
-      return;
-    }
+  // Initial connection check
+  useEffect(() => {
+    checkWalletConnection();
+  }, []);
 
+  const disconnectWallet = useCallback(async () => {
     try {
-      // Search for available wallets using our utility function
-      const availableWallets = getAvailableWallets();
+      console.log("Disconnecting wallet...");
       
-      console.log("Available wallets:", availableWallets);
+      // Clear all state
+      setPublicAddress(null);
+      setUsedAddresses(null);
+      setIsVerified(false);
+      setEnabledWallet(null);
+      setPreviousWallet(null);
+      setLastVerificationTime(null);
       
-      // Check if any wallet is enabled
-      let walletKey = null;
-      for (const key of availableWallets) {
+      // Clear session
+      clearSession();
+      
+      console.log("✅ Wallet disconnected successfully");
+    } catch (error) {
+      console.error("Error disconnecting wallet:", error);
+    }
+  }, []);
+  
+  const checkWalletConnection = useCallback(async () => {
+    try {
+      // Check if the wallet API is available
+      if (typeof window === 'undefined' || !window.cardano) {
+        console.log("⚠️ Cardano API not available");
+        setWalletIdentityError("Cardano API not available");
+        return;
+      }
+      
+      // Get available wallets
+      const wallets = Object.keys(window.cardano || {});
+      
+      if (wallets.length === 0) {
+        console.log("⚠️ No Cardano wallets found");
+        setWalletIdentityError("No Cardano wallets found");
+        return;
+      }
+      
+      // Try to find an enabled wallet
+      let walletKey: string | null = null;
+      
+      // First check if cardanoEnabledWallet from the hook is available
+      if (cardanoEnabledWallet && typeof window.cardano[cardanoEnabledWallet] !== 'undefined') {
+        walletKey = cardanoEnabledWallet;
+        console.log("🔍 Found already enabled wallet from hook:", walletKey);
+      } 
+      // Then check if our previous wallet is still enabled
+      else if (previousWallet && typeof window.cardano[previousWallet] !== 'undefined') {
         try {
-          if (await isWalletEnabled(key)) {
-            walletKey = key;
-            break;
+          const isEnabled = await isWalletEnabled(previousWallet);
+          if (isEnabled) {
+            walletKey = previousWallet;
+            console.log("🔍 Found previously enabled wallet:", walletKey);
           }
         } catch (err) {
-          console.error(`Error checking if wallet ${key} is enabled:`, err);
+          console.log("Previous wallet no longer available:", previousWallet);
         }
       }
       
+      // If we didn't find an enabled wallet, check if the wallet is connected
       if (!walletKey) {
-        // If we previously had a wallet but now don't, update the state
+        // Reset connection status if we've lost the wallet connection
         if (enabledWallet) {
-          console.log("🔍 No wallet detected, clearing state");
-          await disconnectWallet();
+          console.log("⚠️ Previously enabled wallet is no longer connected:", enabledWallet);
+          disconnectWallet();
         }
         return;
       }
@@ -175,13 +187,12 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         if (enabledWallet && enabledWallet !== walletKey) {
           console.log("⚠️ Wallet changed from", enabledWallet, "to", walletKey, "- resetting verification state");
           setIsVerified(false);
-          verifiedStakeAddressRef.current = null;
         }
         
         setEnabledWallet(walletKey);
         setPreviousWallet(walletKey);
         
-        await fetchStakeAddress(walletKey); // <– Make sure this is running!
+        await fetchWalletAddresses(walletKey);
       }
 
       // Check if verification is still valid based on time
@@ -193,23 +204,21 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         if (elapsedMs > 3600000) {
           console.log("🔒 Verification expired after 1 hour, resetting state");
           setIsVerified(false);
-          verifiedStakeAddressRef.current = null;
-          localStorage.removeItem("verifiedStakeAddress");
-          localStorage.removeItem("verificationTimestamp");
+          clearSession();
         }
       }
     } catch (error) {
       console.error("Error checking wallet connection:", error);
       // Reset state on error
       setEnabledWallet(null);
-      setStakeAddress(null);
+      setPublicAddress(null);
       setIsVerified(false);
       setWalletIdentityError(error instanceof Error ? error.message : String(error));
     }
-  }, [enabledWallet, disconnectWallet, isVerified, lastVerificationTime]);
+  }, [enabledWallet, disconnectWallet, isVerified, lastVerificationTime, cardanoEnabledWallet, previousWallet]);
 
-  // Updated fetchStakeAddress to also fetch payment addresses
-  const fetchStakeAddress = async (walletKey: string) => {
+  // Fetch wallet addresses
+  const fetchWalletAddresses = async (walletKey: string) => {
     try {
       setIsWalletLoading(true);
       setWalletIdentityError(null);
@@ -219,56 +228,63 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       // Get the wallet API
       const api = await window.cardano[walletKey].enable();
       
-      // Get stake address directly
-      let newStakeAddress: string;
-      try {
-        // Get stake address using the wallet key and API
-        const stakeAddressResult = await getStakeAddressFromWallet(walletKey);
-        if (!stakeAddressResult) {
-          throw new Error("Null stake address returned");
-        }
-        newStakeAddress = stakeAddressResult;
-        console.log("🔑 Fetched stake address:", newStakeAddress.substring(0, 10) + '...');
-      } catch (error) {
-        console.error("Failed to get stake address directly:", error);
-        throw new Error("Could not get stake address from wallet");
-      }
-      
       // Get payment/used addresses
       let newUsedAddresses: string[] = [];
       try {
         newUsedAddresses = await api.getUsedAddresses();
-        console.log("🔑 Fetched used addresses:", newUsedAddresses.length > 0 
-          ? newUsedAddresses[0].substring(0, 10) + '...' 
+        console.log("🔑 Fetched used addresses:", newUsedAddresses.length > 0
+          ? newUsedAddresses[0].substring(0, 10) + '...'
           : 'none');
       } catch (error) {
         console.error("Failed to get used addresses:", error);
-        // Continue even if we couldn't get used addresses
+        throw new Error("Could not get public addresses from wallet. Please ensure your wallet is properly connected.");
       }
       
-      // Set state with the new addresses
-      setStakeAddress(newStakeAddress);
+      // Ensure we have at least one public address
+      if (!newUsedAddresses || newUsedAddresses.length === 0) {
+        throw new Error("No public addresses available in wallet. Please ensure your wallet has at least one used address.");
+      }
+      
+      // Set public address to first used address - this is our main identifier
+      const newPublicAddress = newUsedAddresses[0];
+      setPublicAddress(newPublicAddress);
       setUsedAddresses(newUsedAddresses);
       
-      // Set payment address if available
-      if (newUsedAddresses && newUsedAddresses.length > 0) {
-        setPaymentAddress(newUsedAddresses[0]);
+      // After fetching addresses, check if the session is valid
+      const session = await getSession();
+      if (session && session.publicAddress === newPublicAddress) {
+        setIsVerified(true);
+        setLastVerificationTime(new Date(session.verifiedAt));
+      } else if (isVerified) {
+        // If the addresses don't match but we thought we were verified, reset
+        setIsVerified(false);
       }
       
-      setIsConnected(true);
       setIsWalletLoading(false);
-      
-      return { stakeAddress: newStakeAddress, usedAddresses: newUsedAddresses };
     } catch (error) {
-      console.error("Error fetching stake address:", error);
-      setWalletIdentityError(error instanceof Error ? error.message : String(error));
+      console.error("Error fetching wallet addresses:", error);
       setIsWalletLoading(false);
+      setWalletIdentityError(error instanceof Error ? error.message : String(error));
       throw error;
     }
   };
   
+  // Create a function to refresh wallet identity
+  const refreshWalletIdentity = async () => {
+    try {
+      if (enabledWallet) {
+        await fetchWalletAddresses(enabledWallet);
+      } else {
+        await checkWalletConnection();
+      }
+    } catch (error) {
+      console.error("Error refreshing wallet identity:", error);
+      setWalletIdentityError(error instanceof Error ? error.message : String(error));
+    }
+  };
+  
   // Create a function to handle wallet identity verification
-  const verifyWalletIdentity = async (stakeAddr: string, api: any) => {
+  const verifyWalletIdentity = async (publicAddr: string, api: any) => {
     try {
       // Get payment addresses
       const usedAddresses = await api.getUsedAddresses();
@@ -281,10 +297,9 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       // Get the first payment address (hex format)
       const paymentAddressHex = usedAddresses[0];
       
-      // Create a message to sign - include the current timestamp, stake address and payment address
+      // Create a message to sign - include the current timestamp and public address
       const messageObject = {
-        stakeAddress: stakeAddr,
-        paymentAddress: paymentAddressHex,
+        publicAddress: paymentAddressHex,
         timestamp: new Date().toISOString(),
         action: 'verify_wallet'
       };
@@ -307,312 +322,67 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       });
       
       // Important: for verification we need to use the ORIGINAL message that was signed
-      // The wallet likely decoded the hex back to original JSON bytes before signing
-      const message = messageJson; // Use the original JSON, not the hex string
-      console.log("📝 Message for verification (JSON):", message.substring(0, 30) + "...");
+      const message = messageJson;
       
-      // The public key from wallet may be CBOR encoded
-      console.log("🔑 Raw wallet public key:", result.key);
+      // Convert signature and key to hex strings if not already
+      const signature = typeof result.signature === 'string' 
+        ? result.signature 
+        : Buffer.from(result.signature).toString('hex');
       
-      let publicKeyHex;
-      
-      try {
-        // Try using the extractRawPublicKeyHex utility
-        try {
-          publicKeyHex = await extractRawPublicKeyHex(result.key);
-          console.log("✅ Extracted raw public key hex:", publicKeyHex);
-        } catch (utilError) {
-          console.error("❌ Async utility extraction failed:", utilError);
-          
-          // Fallback: Try synchronous extraction if async fails (avoids CBOR issues)
-          try {
-            console.log("⚠️ Falling back to synchronous key extraction...");
-            publicKeyHex = extractRawPublicKeyHexSync(result.key);
-            console.log("✅ Extracted key using synchronous method");
-          } catch (syncError) {
-            console.error("❌ Sync extraction failed:", syncError);
-            
-            // Last resort fallback: Manual extraction if both utilities fail
-            console.log("⚠️ Trying last resort manual extraction...");
-            
-            // Direct approach - try to convert directly from hex
-            const rawKeyBuffer = Buffer.from(result.key, 'hex');
-            
-            if (rawKeyBuffer.length === 32) {
-              // This is already a raw 32-byte key
-              publicKeyHex = result.key;
-              console.log("✅ Key was already in raw format");
-            } 
-            // If it's not 32 bytes, try with PublicKey class
-            else {
-              try {
-                const pubKey = PublicKey.from_bytes(rawKeyBuffer);
-                publicKeyHex = Buffer.from(pubKey.as_bytes()).toString('hex');
-                console.log("✅ Extracted key using PublicKey class");
-              } catch (keyError) {
-                console.error("❌ All key extraction methods failed");
-                throw new Error("Could not extract a valid 32-byte public key");
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error("❌ Failed to extract public key:", error);
-        throw new Error("Could not extract a valid 32-byte public key");
-      }
-      
-      // Extract the raw signature from CBOR
-      let rawSignatureHex = result.signature;
-      console.log("📊 Original signature format:", {
-        type: typeof result.signature,
-        length: result.signature?.length || 0,
-        hex: result.signature?.substring(0, 30) + "...",
-      });
-      
-      try {
-        // Dynamically import cbor library to avoid SSR issues
-        const cbor = await import('cbor');
+      const publicKey = typeof result.key === 'string'
+        ? result.key
+        : Buffer.from(result.key).toString('hex');
         
-        // Try to decode as CBOR first
-        try {
-          const decoded = await cbor.decodeFirst(Buffer.from(result.signature, 'hex'));
-          console.log("🔍 Decoded signature CBOR structure:", decoded);
-          
-          // Handle potential formats
-          if (decoded) {
-            if (typeof decoded === 'object') {
-              // Object with signature property (CIP-8/CIP-30)
-              if (decoded.signature && typeof decoded.signature === 'string') {
-                console.log("✅ Found signature as string property:", decoded.signature.substring(0, 20) + "...");
-                rawSignatureHex = decoded.signature;
-              } 
-              // Format with buffer directly
-              else if (decoded.signature && Buffer.isBuffer(decoded.signature)) {
-                console.log("✅ Found signature as buffer property");
-                rawSignatureHex = decoded.signature.toString('hex');
-              }
-              // Some wallets might have a 'data' property
-              else if (decoded.data && typeof decoded.data === 'string') {
-                console.log("✅ Found signature as data property:", decoded.data.substring(0, 20) + "...");
-                rawSignatureHex = decoded.data;
-              }
-              // Some wallets use numeric indices
-              else if (Array.isArray(decoded) && decoded.length > 0) {
-                // Try common index patterns
-                const potentialSig = decoded[0] || decoded[1] || decoded[decoded.length - 1];
-                if (typeof potentialSig === 'string') {
-                  console.log("✅ Found signature in array at index:", decoded.indexOf(potentialSig));
-                  rawSignatureHex = potentialSig;
-                } else if (Buffer.isBuffer(potentialSig)) {
-                  console.log("✅ Found signature buffer in array");
-                  rawSignatureHex = potentialSig.toString('hex');
-                }
-              }
-              // Last resort - serialize the whole object and log it
-              else {
-                console.warn("⚠️ Complex CBOR object structure:", JSON.stringify(decoded));
-                
-                // Try to extract any string that looks like a hex signature
-                const objStr = JSON.stringify(decoded);
-                const hexMatches = objStr.match(/[0-9a-f]{120,128}/);
-                if (hexMatches && hexMatches[0]) {
-                  console.log("✅ Found potential signature by pattern matching:", hexMatches[0].substring(0, 20) + "...");
-                  rawSignatureHex = hexMatches[0];
-                }
-              }
-            } 
-            // Direct buffer
-            else if (Buffer.isBuffer(decoded)) {
-              console.log("✅ Decoded to direct buffer");
-              rawSignatureHex = decoded.toString('hex');
-            }
-            // Direct string
-            else if (typeof decoded === 'string') {
-              console.log("✅ Decoded to direct string");
-              rawSignatureHex = decoded;
-            }
-          }
-        } catch (cborError) {
-          console.warn("⚠️ CBOR decoding failed:", cborError);
-          
-          // If CBOR fails, maybe it's already a raw signature
-          if (result.signature.length === 128 || result.signature.length === 64) {
-            console.log("✅ Signature seems to be already in raw format");
-            rawSignatureHex = result.signature;
-          } else {
-            console.error("❌ Unknown signature format and CBOR decoding failed");
-          }
-        }
-      } catch (err) {
-        console.error("❌ Failed to import or process with CBOR:", err);
-        // Fallback to raw signature as a last resort
-        rawSignatureHex = result.signature;
-      }
+      console.log("🔑 publicKey:", publicKey);
+      console.log("✍️ signature:", signature);
       
-      console.log("✅ Extracted raw signature hex:", rawSignatureHex.substring(0, 20) + "...");
-      console.log("✅ Signature length:", rawSignatureHex.length, "characters (should be ~128)");
+      // Send to server for verification
+      console.log("🔐 Sending verification request to server...");
       
-      // Normalize signature to ensure it's exactly 64 bytes
-      const normalizedSignature = normalizeEd25519Signature(rawSignatureHex);
-      console.log("✅ Normalized signature length:", normalizedSignature.length, 
-        "characters =", Buffer.from(normalizedSignature, 'hex').length, "bytes");
-      
-      console.log("🔑 Final public key hex:", publicKeyHex);
-      console.log("🔢 Payload sizes:", {
-        stakeAddress: stakeAddr.length,
-        publicKey: publicKeyHex.length,
-        rawSignature: rawSignatureHex.length,
-        normalizedSignature: normalizedSignature.length,
-        message: message.length,
-      });
-
-      // Run a debug check first to diagnose any issues
-      let bestVerificationMethod = "";
-      try {
-        console.log("🔍 Running verification debug check...");
-        const debugResponse = await fetch('/api/user/verify-debug', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            stakeAddress: stakeAddr,
-            publicKey: publicKeyHex,
-            signature: normalizedSignature,
-            message
-          }),
-        });
-        
-        const debugResult = await debugResponse.json();
-        console.log("📊 Debug verification results:", debugResult);
-        
-        // Find which verification method succeeded
-        const verificationResults = debugResult.verificationResults || {};
-        for (const [method, result] of Object.entries(verificationResults)) {
-          // Type check to avoid TypeScript errors
-          if (result && typeof result === 'object' && 'valid' in result && result.valid === true) {
-            bestVerificationMethod = method;
-            console.log(`✅ Found working verification method: ${method}`);
-            break;
-          }
-        }
-          
-        if (bestVerificationMethod) {
-          console.log("✅ Debug verification found a valid combination!");
-        } else {
-          console.warn("⚠️ Debug verification failed to find a valid combination");
-        }
-      } catch (debugError) {
-        console.error("❌ Debug verification error:", debugError);
-      }
-
-      // Make actual API call to validate the signature with the best method found
-      console.log("📤 Making actual verification request");
-      const apiUrl = bestVerificationMethod 
-        ? `/api/user/verify?method=${bestVerificationMethod}&stakeAddress=${encodeURIComponent(stakeAddr)}` 
-        : `/api/user/verify?stakeAddress=${encodeURIComponent(stakeAddr)}`;
-        
-      // Log the exact payload being sent to the API
-      console.log("📦 Verification API payload:", {
-        stakeAddress: stakeAddr.substring(0, 10) + "...",
-        paymentAddress: paymentAddressHex,
-        pubKeyLength: publicKeyHex.length,
-        signatureLength: result.signature.length,
-        messageLength: message.length,
-        messageFirst20Chars: message.substring(0, 20) + "...",
-        apiUrl
-      });
-      
-      // IMPORTANT FINAL TEST: Compare what's being signed vs what's being verified
-      console.log("🧪 VERIFICATION TEST");
-      console.log("🧪 Original JSON (signed):", messageJson.substring(0, 40) + "...");
-      console.log("🧪 Message being sent (verify):", message.substring(0, 40) + "...");
-      console.log("🧪 messageHex (sent to wallet):", messageHex.substring(0, 40) + "...");
-      console.log("🧪 Raw signature (hex):", {
-        length: normalizedSignature.length,
-        bytes: Buffer.from(normalizedSignature, 'hex').length,
-        excerpt: normalizedSignature.substring(0, 32) + "..."
-      });
-      console.log("🧪 Public key (hex):", {
-        length: publicKeyHex.length,
-        bytes: Buffer.from(publicKeyHex, 'hex').length,
-        value: publicKeyHex
-      });
-      
-      const response = await fetch(apiUrl, {
+      const verifyResponse = await fetch('/api/user/verify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest'
         },
         body: JSON.stringify({
-          stakeAddress: stakeAddr,
-          pubKey: publicKeyHex,
-          signature: result.signature, // Send the original signature from the wallet
-          message
+          message,
+          signature,
+          pubKey: publicKey,
+          publicAddress: publicAddr
         }),
       });
-
-      if (!response.ok) {
-        console.error("❌ Response not OK:", {
-          status: response.status,
-          statusText: response.statusText,
-          headers: Object.fromEntries([...response.headers.entries()]),
-        });
-        
-        // Clone the response first to avoid "body already read" errors
-        const responseClone = response.clone();
-        
-        // Try to get the raw text first to see what's actually being returned
-        const rawText = await responseClone.text();
-        console.error("❌ Raw response text:", rawText);
-        
-        let errorJson: any;
-        try {
-          // Now try to parse it as JSON
-          if (rawText.trim()) {
-            errorJson = JSON.parse(rawText);
-          } else {
-            errorJson = { error: "Empty response from server" };
-          }
-        } catch (parseError) {
-          console.error("❌ Failed to parse error JSON:", parseError);
-          errorJson = { 
-            error: "Invalid JSON response from server",
-            rawText: rawText.substring(0, 100) + (rawText.length > 100 ? '...' : '')
-          };
-        }
-
-        console.error("❌ Verification API error:", {
-          status: response.status,
-          error: errorJson.error,
-          detail: errorJson.detail,
-          stack: errorJson.stack,
-          raw: errorJson
-        });
-
-        throw new Error(`Verification failed: ${errorJson.error || response.statusText || "Unknown error"}`);
-      }
-
-      const verifyResult = await response.json();
-      console.log("✅ Verification result:", verifyResult);
       
-      // Update verification status based on API response (check verified field from response)
+      // Check for rate limiting
+      if (verifyResponse.status === 429) {
+        const rateLimitData = await verifyResponse.json();
+        const retryAfter = rateLimitData.retryAfter || 10;
+        
+        const errorMessage = `Too many verification attempts. Please wait ${retryAfter} seconds and try again.`;
+        toast.error(errorMessage, { id: "verify" });
+        throw new Error(errorMessage);
+      }
+      
+      // Check for other server errors
+      if (!verifyResponse.ok) {
+        const errorData = await verifyResponse.json();
+        const errorMessage = errorData.error || `Server error: ${verifyResponse.status}`;
+        toast.error(errorMessage, { id: "verify" });
+        throw new Error(errorMessage);
+      }
+      
+      // Parse verification result
+      const verifyResult = await verifyResponse.json();
+      console.log("🔐 Server verification result:", verifyResult);
+      
+      // Update verification status based on API response
       if (verifyResult.verified) {
         toast.success("Wallet verified!");
         
         // Save the verification timestamp
         setLastVerificationTime(new Date());
         
-        // Set verified state and addresses
+        // Set verified state and address
         setIsVerified(true);
-        
-        // If we didn't have a valid paymentAddress yet but received one in the response, update it
-        if (verifyResult.paymentAddress && (!paymentAddress || verifyResult.paymentAddress !== paymentAddress)) {
-          setPaymentAddress(verifyResult.paymentAddress);
-        }
         
         return true;
       } else {
@@ -639,42 +409,6 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     }
   };
 
-  // Add a helper function for retrying fetch operations
-  const fetchWithRetry = async (url: string, options: RequestInit, maxRetries = 3, delay = 1000) => {
-    let lastError;
-    
-    for (let i = 0; i < maxRetries; i++) {
-      try {
-        console.log(`Fetch attempt ${i + 1}/${maxRetries} for ${url}`);
-        const response = await fetch(url, options);
-        return response;
-      } catch (error) {
-        console.error(`Fetch attempt ${i + 1} failed:`, error);
-        lastError = error;
-        
-        // Don't wait on the last attempt
-        if (i < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, delay));
-          // Increase delay for next retry (exponential backoff)
-          delay *= 1.5;
-        }
-      }
-    }
-    
-    // If we get here, all retries failed
-    throw lastError;
-  };
-
-  // Refresh wallet identity data
-  const refreshWalletIdentity = async () => {
-    if (enabledWallet) {
-      await fetchStakeAddress(enabledWallet);
-    } else {
-      // If no enabled wallet, check connections
-      await checkWalletConnection();
-    }
-  };
-
   const verifyWalletIdentityManually = async () => {
     console.log("🔐 Manual wallet verification requested");
     
@@ -686,7 +420,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     }
     
     // Don't proceed if no wallet connection
-    if (!stakeAddress) {
+    if (!publicAddress) {
       console.warn("⚠️ No wallet connected, cannot verify");
       toast.error("Please connect your wallet first");
       return;
@@ -723,132 +457,26 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         return;
       }
       
-      try {
-        // Verify the wallet identity using the utility function
-        await verifyWalletIdentity(stakeAddress, api);
-        
-        toast.success("Wallet verified successfully! ✓", { id: "verify" });
-        setIsVerified(true);
-      } catch (verifyError: any) {
-        console.error("❌ Verification error:", verifyError);
-        
-        // Handle user rejecting the signature request
-        if (verifyError.message?.includes('user declined') || 
-            verifyError.message?.includes('declined sign') || 
-            verifyError.message?.includes('rejected')) {
-          toast.error("You need to approve the signature request in your wallet to verify", { id: "verify" });
-          setWalletIdentityError("Signature request was rejected");
-        } else if (verifyError.message?.includes('timeout')) {
-          toast.error("Verification timed out. Please try again", { id: "verify" });
-          setWalletIdentityError("Verification timed out");
-        } else {
-          toast.error(`Verification failed: ${verifyError.message || 'Unknown error'}`, { id: "verify" });
-          setWalletIdentityError(verifyError.message || "Verification failed");
-        }
+      // Verify wallet identity
+      const verified = await verifyWalletIdentity(publicAddress, api);
+      
+      if (verified) {
+        // Create a session
+        await createSession(publicAddress);
+        toast.success("Wallet verified successfully!", { id: "verify" });
+      } else {
+        toast.error("Wallet verification failed.", { id: "verify" });
       }
     } catch (error) {
-      console.error("❌ General verification error:", error);
-      toast.error(`Verification error: ${error instanceof Error ? error.message : 'Unknown'}`, { id: "verify" });
-      setWalletIdentityError(error instanceof Error ? error.message : "Unknown error");
+      console.error("❌ Error in verifyWalletIdentityManually:", error);
+      toast.error(`Verification error: ${error instanceof Error ? error.message : 'Unknown error'}`, { id: "verify" });
     } finally {
       setIsWalletLoading(false);
     }
   };
 
-  // Add this helper function to the file
-  const normalizeEd25519Signature = (sigHex: string): string => {
-    try {
-      console.log("🔎 Starting signature normalization...");
-      console.log("📊 Input signature:", { 
-        length: sigHex?.length || 0, 
-        preview: sigHex?.substring(0, 20) + "...",
-        isHex: /^[0-9a-f]+$/i.test(sigHex || "") 
-      });
-      
-      // If the signature is already valid and is 128 or 140 characters, return it as-is
-      // Some wallets produce 140-character signatures that should not be trimmed
-      if (sigHex && (sigHex.length === 128 || sigHex.length === 140) && /^[0-9a-f]+$/i.test(sigHex)) {
-        console.log(`✅ Signature is already a valid format (${sigHex.length} hex chars) - preserving original format`);
-        return sigHex;
-      }
-      
-      // Check for null/undefined
-      if (!sigHex) {
-        throw new Error("Received empty signature");
-      }
-      
-      // Ensure it's a valid hex string first
-      if (!/^[0-9a-f]+$/i.test(sigHex)) {
-        console.warn("⚠️ Not a valid hex string, attempting to clean...");
-        // Try to extract only hex characters
-        const cleanedSig = sigHex.replace(/[^0-9a-f]/gi, '');
-        
-        if (!/^[0-9a-f]+$/i.test(cleanedSig)) {
-          console.error("❌ Could not convert to valid hex string:", sigHex.substring(0, 50));
-          throw new Error("Signature contains non-hex characters even after cleaning");
-        }
-        
-        console.log("⚙️ Cleaned signature to valid hex:", cleanedSig.substring(0, 20) + "...");
-        sigHex = cleanedSig;
-      }
-      
-      // For 140-character signatures, special case - don't trim them
-      if (sigHex.length === 140) {
-        console.log("🔍 Detected 140-character signature - keeping original format");
-        return sigHex;
-      }
-      
-      // Convert to buffer to normalize
-      const sigBuffer = Buffer.from(sigHex, 'hex');
-      console.log("📊 Converted to buffer:", { bytes: sigBuffer.length });
-      
-      // Special handling for longer signatures that aren't 140 characters
-      // Don't aggressively trim unusual signatures
-      if (sigBuffer.length > 64 && sigHex.length !== 140) {
-        // Check if it's the expected Cardano signature length
-        if (sigBuffer.length === 70) {
-          console.log(`🔍 Found 70-byte Cardano signature format, preserving as is`);
-          return sigHex;
-        }
-        
-        console.log(`⚠️ Signature is too long (${sigBuffer.length} bytes), trimming to 64 bytes`);
-        const trimmedBuffer = sigBuffer.slice(0, 64);
-        const trimmedHex = trimmedBuffer.toString('hex');
-        console.log(`✂️ Trimmed signature: ${trimmedBuffer.length} bytes = ${trimmedHex.length} hex chars`);
-        return trimmedHex;
-      }
-      
-      // If it's too short, it's probably invalid
-      if (sigBuffer.length < 64) {
-        console.warn(`⚠️ Signature is too short: ${sigBuffer.length} bytes (need 64)`);
-        
-        // If it's way too short, we probably have a corrupted signature
-        if (sigBuffer.length < 32) {
-          console.error(`❌ Signature critically short: ${sigBuffer.length} bytes`);
-          throw new Error(`Signature is invalid: only ${sigBuffer.length} bytes (need 64)`);
-        }
-        
-        // Try to pad to 64 bytes with zeros (not ideal, but might work in some cases)
-        const paddedBuffer = Buffer.alloc(64);
-        sigBuffer.copy(paddedBuffer);
-        const paddedHex = paddedBuffer.toString('hex');
-        console.log(`📏 Padded signature: ${paddedBuffer.length} bytes = ${paddedHex.length} hex chars`);
-        return paddedHex;
-      }
-      
-      // Return what we have - should be 64 bytes
-      const finalHex = sigBuffer.toString('hex');
-      console.log(`✅ Normalized signature: ${sigBuffer.length} bytes = ${finalHex.length} hex chars`);
-      return finalHex;
-    } catch (error) {
-      console.error("❌ Failed to normalize signature:", error);
-      throw new Error("Failed to normalize Ed25519 signature: " + 
-        (error instanceof Error ? error.message : String(error)));
-    }
-  };
-
   const value = {
-    stakeAddress,
+    publicAddress,
     usedAddresses,
     isVerified,
     isWalletLoading,
