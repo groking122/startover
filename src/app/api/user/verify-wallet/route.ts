@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as CSL from '@emurgo/cardano-serialization-lib-asmjs';
 import { verifySignature } from '@/utils/verifySignature';
+import { toHex, fromHex } from '@/utils/client/stringUtils';
 
 /**
  * API endpoint to verify a wallet signature using payment address
@@ -24,8 +25,12 @@ export async function POST(req: NextRequest) {
 
     // Step 1: Verify the signature is valid for the message using the public key
     try {
+      // Since the wallet signs a hex message but we receive the original JSON message,
+      // we need to convert it back to hex format for signature verification
+      const messageHex = toHex(message);
+      
       // Use our existing verification logic to check the signature
-      const isValidSignature = verifySignature(pubKey, signature, message);
+      const isValidSignature = verifySignature(pubKey, signature, messageHex);
       
       if (!isValidSignature) {
         console.log('❌ Signature verification failed');

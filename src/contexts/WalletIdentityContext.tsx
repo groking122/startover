@@ -13,6 +13,7 @@ import type * as CborModule from 'cbor';
 import { toast } from 'react-hot-toast';
 import { useCardano } from '@cardano-foundation/cardano-connect-with-wallet';
 import { safeLocalStorage } from '@/utils/client/browserUtils';
+import { toHex } from '@/utils/client/stringUtils';
 
 interface WalletIdentityContextType {
   stakeAddress: string | null;
@@ -275,9 +276,13 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       const messageJson = JSON.stringify(messageObject);
       console.log("📝 Original JSON message:", messageJson);
       
-      // Sign the message with the payment address
+      // Convert JSON string to HEX format as required by CIP-30
+      const messageHex = toHex(messageJson);
+      console.log("🔢 Converted HEX:", messageHex);
+      
+      // Sign the message with the payment address using hex format
       console.log("⏳ Requesting wallet to sign data...");
-      const result = await api.signData(paymentAddress, messageJson);
+      const result = await api.signData(paymentAddress, messageHex);
       console.log("✅ Received sign result from wallet:", {
         keyLength: result.key?.length || 0,
         signatureLength: result.signature?.length || 0,

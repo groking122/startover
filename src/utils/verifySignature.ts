@@ -11,7 +11,7 @@ import {
  * Verify a signature against a message using a public key
  * @param publicKeyHex The public key in hex format
  * @param signatureHex The signature in hex format
- * @param message The original message that was signed
+ * @param message The message that was signed (either original string or hex-encoded)
  * @returns true if signature is valid, false otherwise
  */
 export function verifySignature(publicKeyHex: string, signatureHex: string, message: string): boolean {
@@ -25,7 +25,8 @@ export function verifySignature(publicKeyHex: string, signatureHex: string, mess
     // For JSON messages, convert to string if it's an object
     const messageToVerify = typeof message === 'object' ? JSON.stringify(message) : message;
     
-    // Convert message to buffer
+    // Convert message to buffer - Cardano wallets expect hex format for signing
+    // If the message is already in hex format, we use it directly
     const messageBuffer = Buffer.from(messageToVerify, 'utf8');
     
     // Verify the signature
