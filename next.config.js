@@ -13,10 +13,7 @@ const nextConfig = {
     // Disable automatic static optimization for the chat page
     // This is needed because it relies heavily on client-side features
     optimizeCss: false,
-    esmExternals: 'loose',
   },
-  // Disable static generation for chat-related pages
-  unstable_runtimeJS: true,
   // Configure webpack to handle lucid-cardano and other problematic dependencies
   webpack: (config, { isServer }) => {
     // Avoid SSR issues with browser-specific modules
