@@ -26,21 +26,13 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 async function testSessionManagement() {
   console.log('=== Testing Session Management ===');
   
-  // Test 1: Create session with stake address only (legacy)
-  await createSession(TEST_STAKE_ADDRESS, '');
-  console.log('Created legacy session with stake address');
-  
-  // Validate session with stake address
-  const isValidStake = await validateSessionForAddress(TEST_STAKE_ADDRESS);
-  console.log('Legacy session valid with stake address:', isValidStake);
-  
-  // Test 2: Create session with public address 
-  await createSession('', TEST_PUBLIC_ADDRESS);
-  console.log('Created new session with public address');
+  // Test 1: Create session with public address
+  await createSession(TEST_PUBLIC_ADDRESS);
+  console.log('Created session with public address');
   
   // Validate session with public address
   const isValidPublic = await validateSessionForAddress(TEST_PUBLIC_ADDRESS);
-  console.log('New session valid with public address:', isValidPublic);
+  console.log('Session valid with public address:', isValidPublic);
   
   // Check session data
   const session = await getSession();

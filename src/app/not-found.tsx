@@ -3,9 +3,18 @@
 // Force dynamic rendering to avoid static generation
 export const dynamic = 'force-dynamic';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 export default function NotFound() {
+  // Use state to track client-side rendering
+  const [isClient, setIsClient] = useState(false);
+  
+  // Only run after mounting on the client
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 text-white p-4">
       <div className="max-w-md w-full text-center space-y-6">
