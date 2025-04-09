@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as CSL from '@emurgo/cardano-serialization-lib-asmjs';
 import { verifySignature } from '@/utils/verifySignature';
-import { fromHex } from '@/utils/client/stringUtils';
 
 /**
  * API endpoint to verify a wallet signature using payment address
@@ -23,83 +22,31 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Comprehensive logging of the incoming verification payload
-    console.log("Incoming verification payload (backend):", {
-      signatureLength: signature.length,
-      signatureBytes: Buffer.from(signature, 'hex').length,
-      signaturePreview: signature.substring(0, 30) + "...",
-      messageLength: message.length,
-      messagePreview: message.substring(0, 30) + "...",
-      pubKeyLength: pubKey.length,
-      pubKeyBytes: Buffer.from(pubKey, 'hex').length,
-      pubKeyPreview: pubKey.substring(0, 30) + "...",
-      paymentAddressPreview: paymentAddress.substring(0, 20) + "..."
-    });
+    // Convert HEX message (signed by wallet) directly to a Buffer
+    const messageBytes = Buffer.from(message, 'hex');
 
-    // Enhanced signature validation
-    console.log("Received signature data:", {
-      signatureHexLength: signature.length,
-      signatureByteLength: Buffer.from(signature, 'hex').length,
-      pubKeyHexLength: pubKey.length,
-      pubKeyByteLength: Buffer.from(pubKey, 'hex').length,
+    console.log('Using original hex-encoded message bytes for verification:', {
       messageHexLength: message.length,
+      messageBytesLength: messageBytes.length,
+      messageHexPreview: message.substring(0, 30) + '...'
     });
 
-    // Validate signature size
-    const signatureBuffer = Buffer.from(signature, 'hex');
-    if (signatureBuffer.length !== 64) {
+    // Directly verify using bytes exactly as signed by wallet
+    const isValidSignature = verifySignature(pubKey, signature, messageBytes);
+
+    if (!isValidSignature) {
+      console.log('❌ Signature verification failed');
       return NextResponse.json(
-        {
-          success: false,
-          error: `Invalid signature size: expected 64 bytes, got ${signatureBuffer.length} bytes`,
-          details: {
-            signatureHexLength: signature.length,
-            signatureByteLength: signatureBuffer.length,
-            signatureHexPreview: signature.substring(0, 30) + '...',
-          }
+        { 
+          success: false, 
+          error: 'Invalid signature' 
         },
         { status: 400 }
       );
     }
 
-    // Step 1: Verify the signature is valid for the message using the public key
-    try {
-      // The message is already hex-encoded from frontend - use it directly
-      const messageHex = message;
-      const messageBytes = Buffer.from(messageHex, 'hex');
-      
-      console.log("Using original hex-encoded message bytes for verification:", {
-        messageHexLength: messageHex.length,
-        messageBytesLength: messageBytes.length,
-        messageHexPreview: messageHex.substring(0, 30) + "..."
-      });
-      
-      // Use our existing verification logic to check the signature with the hex bytes
-      const isValidSignature = verifySignature(pubKey, signature, messageBytes);
-      
-      if (!isValidSignature) {
-        console.log('❌ Signature verification failed');
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Invalid signature',
-          },
-          { status: 400 }
-        );
-      }
-      
-      console.log('✅ Signature verified successfully');
-    } catch (error) {
-      console.error('Error verifying signature:', error);
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Signature verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        },
-        { status: 400 }
-      );
-    }
-
+    console.log('✅ Signature verified successfully');
+    
     // Step 2: Verify that the payment address matches the public key
     try {
       // Derive public key hash from the provided public key
@@ -151,9 +98,6 @@ export async function POST(req: NextRequest) {
       }
       
       console.log('✅ Payment address verified successfully');
-      
-      // Save the verified address to your database here if needed
-      // This is where you'd associate the stakeAddress with a user account
       
       return NextResponse.json({
         success: true,

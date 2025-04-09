@@ -11,10 +11,14 @@ import {
  * Verify a signature against a message using a public key
  * @param publicKeyHex The public key in hex format
  * @param signatureHex The signature in hex format
- * @param message The message that was signed (string or Buffer)
+ * @param messageBytes The raw message bytes that were signed
  * @returns true if signature is valid, false otherwise
  */
-export function verifySignature(publicKeyHex: string, signatureHex: string, message: string | Buffer): boolean {
+export function verifySignature(
+  publicKeyHex: string, 
+  signatureHex: string, 
+  messageBytes: Buffer
+): boolean {
   try {
     // Validate input sizes first
     const pubKeyBuffer = Buffer.from(publicKeyHex, 'hex');
@@ -25,11 +29,8 @@ export function verifySignature(publicKeyHex: string, signatureHex: string, mess
       pubKeyByteLength: pubKeyBuffer.length,
       sigHexLength: signatureHex.length,
       sigByteLength: sigBuffer.length,
-      messageType: typeof message,
-      messageLength: Buffer.isBuffer(message) ? message.length : message.length,
-      messagePreview: Buffer.isBuffer(message) 
-        ? message.toString('hex').substring(0, 30) + "..." 
-        : message.substring(0, 30) + "..."
+      messageBytesLength: messageBytes.length,
+      messageHexPreview: messageBytes.toString('hex').substring(0, 30) + "..."
     });
     
     // ED25519 public keys should be 32 bytes
@@ -50,18 +51,8 @@ export function verifySignature(publicKeyHex: string, signatureHex: string, mess
     // Parse the signature from hex
     const sig = Ed25519Signature.from_hex(signatureHex);
     
-    // Convert message to buffer if it's a string
-    let messageBuffer: Buffer;
-    if (Buffer.isBuffer(message)) {
-      messageBuffer = message;
-    } else {
-      // For JSON messages, convert to string if it's an object
-      const messageToVerify = typeof message === 'object' ? JSON.stringify(message) : message;
-      messageBuffer = Buffer.from(messageToVerify, 'utf8');
-    }
-    
-    // Verify the signature
-    const result = pubKey.verify(messageBuffer, sig);
+    // Verify the signature directly with the provided message bytes
+    const result = pubKey.verify(messageBytes, sig);
     
     console.log(`Signature verification result: ${result ? 'Valid ✅' : 'Invalid ❌'}`);
     return result;
@@ -76,5 +67,6 @@ export function verifySignature(publicKeyHex: string, signatureHex: string, mess
  * @deprecated Use the new parameter order instead
  */
 export async function legacyVerifySignature(publicKeyHex: string, message: string, signatureHex: string): Promise<boolean> {
-  return verifySignature(publicKeyHex, signatureHex, message);
+  const messageBuffer = Buffer.from(message, 'utf8');
+  return verifySignature(publicKeyHex, signatureHex, messageBuffer);
 } 
