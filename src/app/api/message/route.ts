@@ -125,10 +125,10 @@ export async function POST(req: Request) {
     const { data, error } = await supabase
       .from('messages')
       .insert({
-        payment_address_from,
-        payment_address_to,
-        message,
-        signature: signature // Store the signature for audit purposes
+        from,            // Full stake address
+        to,              // Full stake address 
+        to_address: toAddress, // Full base address when provided
+        message
       });
       
     if (error) {

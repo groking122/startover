@@ -19,7 +19,7 @@ const TopBar: React.FC<TopBarProps> = ({
   onRefreshConversations = () => {},
   onNewConversation = () => {}
 }) => {
-  const { stakeAddress, isVerified, verifyWalletIdentityManually, isWalletLoading } = useWalletIdentity();
+  const { stakeAddress, isVerified, verifyWalletIdentityManually, isWalletLoading, walletLocked } = useWalletIdentity();
   
   console.log('TopBar received onRefreshConversations:', !!onRefreshConversations);
   
@@ -34,11 +34,11 @@ const TopBar: React.FC<TopBarProps> = ({
       {process.env.NODE_ENV === 'development' && (
         <>
           <div className="text-xs text-gray-400 p-1 bg-gray-800 border-b border-gray-700">
-            stake: {stakeAddress ? stakeAddress.slice(0, 10) + '...' : 'null'} | verified: {isVerified ? '✅' : '❌'} | loading: {isWalletLoading ? '⏳' : '✓'}
+            stake: {stakeAddress ? stakeAddress.slice(0, 10) + '...' : 'null'} | verified: {isVerified ? '✅' : '❌'} | loading: {isWalletLoading ? '⏳' : '✓'} | locked: {walletLocked ? '🔒' : '🔓'}
           </div>
           
           <pre className="text-xs text-red-500 bg-black p-1 rounded">
-            {JSON.stringify({ stakeAddress, isVerified, isWalletLoading }, null, 2)}
+            {JSON.stringify({ stakeAddress, isVerified, isWalletLoading, walletLocked }, null, 2)}
           </pre>
         </>
       )}
@@ -66,7 +66,7 @@ const TopBar: React.FC<TopBarProps> = ({
                   isVerified ? 'bg-green-700 text-white hover:bg-green-600' : 'bg-yellow-600 text-white hover:bg-yellow-500'
                 }`}
                 onClick={verifyWalletIdentityManually}
-                disabled={isWalletLoading}
+                disabled={isWalletLoading || walletLocked}
               >
                 {isWalletLoading ? (
                   <div className="h-4 w-4 border-t-2 border-white rounded-full animate-spin mr-1" />
@@ -87,7 +87,7 @@ const TopBar: React.FC<TopBarProps> = ({
         </div>
       </div>
       
-      {stakeAddress && !isVerified && !isWalletLoading && (
+      {stakeAddress && !isVerified && !isWalletLoading && !walletLocked && (
         <div className="bg-yellow-800 text-yellow-100 text-sm px-4 py-2">
           ⚠️ Your wallet is connected but not verified.
           <button
@@ -95,6 +95,20 @@ const TopBar: React.FC<TopBarProps> = ({
             onClick={verifyWalletIdentityManually}
           >
             Verify Wallet
+          </button>
+        </div>
+      )}
+
+      {walletLocked && (
+        <div className="bg-red-800 text-red-100 text-sm px-4 py-2 flex items-center justify-between">
+          <div>
+            🔒 Your wallet appears to be locked or temporarily unavailable. Please unlock your wallet to continue.
+          </div>
+          <button
+            className="ml-3 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+            onClick={() => window.location.reload()}
+          >
+            Retry Connection
           </button>
         </div>
       )}

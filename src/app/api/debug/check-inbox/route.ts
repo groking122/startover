@@ -29,9 +29,9 @@ export async function GET() {
     // Extract all unique addresses from messages
     const addresses = new Set<string>();
     messages.forEach((m) => {
-      if (m.from) addresses.add(m.from);
-      if (m.to) addresses.add(m.to);
-      if (m.to_address) addresses.add(m.to_address);
+      if (m.payment_address_from) addresses.add(m.payment_address_from);
+      if (m.payment_address_to) addresses.add(m.payment_address_to);
+      if (m.stake_address_to) addresses.add(m.stake_address_to);
     });
 
     console.log(`Found ${addresses.size} unique addresses to check`);
@@ -48,10 +48,10 @@ export async function GET() {
 
     // Count messages per address
     messages.forEach(m => {
-      if (m.from) messageCounts[m.from] = (messageCounts[m.from] || 0) + 1;
+      if (m.payment_address_from) messageCounts[m.payment_address_from] = (messageCounts[m.payment_address_from] || 0) + 1;
       // Count receiving a message too
-      if (m.to) messageCounts[m.to] = (messageCounts[m.to] || 0) + 1;
-      if (m.to_address) messageCounts[m.to_address] = (messageCounts[m.to_address] || 0) + 1;
+      if (m.payment_address_to) messageCounts[m.payment_address_to] = (messageCounts[m.payment_address_to] || 0) + 1;
+      if (m.stake_address_to) messageCounts[m.stake_address_to] = (messageCounts[m.stake_address_to] || 0) + 1;
     });
 
     // Check each address for conversation partners
@@ -62,12 +62,12 @@ export async function GET() {
       if (!partners || partners.length === 0) {
         // Find messages where this address is involved
         const relatedMessages = messages.filter(m => 
-          m.from === addr || m.to === addr || m.to_address === addr
+          m.payment_address_from === addr || m.payment_address_to === addr || m.stake_address_to === addr
         );
         
         if (relatedMessages.length > 0) {
           anomalies[addr] = relatedMessages.map(m => 
-            `Message ID: ${m.id || 'Unknown'}, From: ${m.from}, To: ${m.to}, ToAddress: ${m.to_address || 'N/A'}`
+            `Message ID: ${m.id || 'Unknown'}, From: ${m.payment_address_from}, To: ${m.payment_address_to}, ToAddress: ${m.stake_address_to || 'N/A'}`
           );
           console.warn(`Anomaly detected for address ${addr}: Has ${relatedMessages.length} messages but 0 partners`);
         }

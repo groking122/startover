@@ -10,9 +10,9 @@ const supabase = createClient(
 
 interface Message {
   id: string;
-  from: string;
-  to: string;
-  to_address?: string;
+  payment_address_from: string;
+  payment_address_to: string;
+  stake_address_to?: string;
   message: string;
   created_at: string;
 }
@@ -42,17 +42,17 @@ export async function GET(request: NextRequest) {
     let query;
     
     if (isRecipientBaseAddress) {
-      // If recipient is a base address, look for messages where to_address matches
+      // If recipient is a base address, look for messages where stake_address_to matches
       query = supabase
         .from('messages')
         .select('*')
-        .or(`and(from.eq.${sender},to_address.eq.${recipient}),and(from.eq.${recipient},to.eq.${sender})`);
+        .or(`and(payment_address_from.eq.${sender},stake_address_to.eq.${recipient}),and(payment_address_from.eq.${recipient},payment_address_to.eq.${sender})`);
     } else {
-      // For stake addresses, search in both directions using the 'to' field (backward compatibility)
+      // For stake addresses, search in both directions using the payment_address_to field
       query = supabase
         .from('messages')
         .select('*')
-        .or(`and(from.eq.${sender},to.eq.${recipient}),and(from.eq.${recipient},to.eq.${sender})`);
+        .or(`and(payment_address_from.eq.${sender},payment_address_to.eq.${recipient}),and(payment_address_from.eq.${recipient},payment_address_to.eq.${sender})`);
     }
     
     // Execute the query with proper ordering
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
       const { data: additionalMessages, error: additionalError } = await supabase
         .from('messages')
         .select('*')
-        .eq('to_address', recipient)
+        .eq('stake_address_to', recipient)
         .order('created_at', { ascending: true });
         
       if (!additionalError && additionalMessages) {
