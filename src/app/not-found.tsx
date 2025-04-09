@@ -1,25 +1,54 @@
-'use client';
+export const runtime = 'edge';
 
 import Link from 'next/link';
-import dynamic from 'next/dynamic';
 
-// Basic server-rendered version with no client-side dependencies
-function NotFoundPage() {
+export default function NotFound() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 text-white p-4">
-      <div className="max-w-md w-full text-center space-y-6">
-        <h1 className="text-5xl font-bold">404</h1>
-        <h2 className="text-2xl font-medium">Page Not Found</h2>
-        <p className="text-gray-400">
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#111827',
+      color: 'white',
+      padding: '1rem'
+    }}>
+      <div style={{
+        maxWidth: '28rem',
+        width: '100%',
+        textAlign: 'center'
+      }}>
+        <h1 style={{
+          fontSize: '3rem',
+          fontWeight: 'bold',
+          marginBottom: '1rem'
+        }}>404</h1>
+        <h2 style={{
+          fontSize: '1.5rem',
+          fontWeight: '500',
+          marginBottom: '1rem'
+        }}>Page Not Found</h2>
+        <p style={{
+          color: '#9CA3AF',
+          marginBottom: '1.5rem'
+        }}>
           The page you're looking for doesn't exist or has been moved.
         </p>
-        <Link href="/" className="inline-block px-6 py-3 rounded-md bg-blue-600 hover:bg-blue-700 transition-colors">
+        <a
+          href="/"
+          style={{
+            display: 'inline-block',
+            padding: '0.75rem 1.5rem',
+            backgroundColor: '#2563EB',
+            color: 'white',
+            borderRadius: '0.375rem',
+            textDecoration: 'none'
+          }}
+        >
           Return Home
-        </Link>
+        </a>
       </div>
     </div>
   );
-}
-
-// Export the component with SSR disabled
-export default dynamic(() => Promise.resolve(NotFoundPage), { ssr: false }); 
+} 
