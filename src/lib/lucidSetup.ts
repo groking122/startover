@@ -1,8 +1,11 @@
 'use client';
 
-import { Blockfrost, Lucid } from "lucid-cardano";
 import { CardanoAPI } from "../types";
 import type { Cip30Wallet } from '@cardano-sdk/cip30';
+
+// Types - will be dynamically imported
+type Lucid = any;
+type Blockfrost = any;
 
 // In-memory cache for the Lucid instance
 let lucidInstance: Lucid | null = null;
@@ -35,6 +38,10 @@ export const getLucidInstance = async (walletApi: Cip30Wallet): Promise<Lucid | 
   }
   
   try {
+    // Dynamically import lucid-cardano
+    const lucidCardano = await import('lucid-cardano');
+    const { Lucid, Blockfrost } = lucidCardano;
+    
     // Initialize Lucid with Blockfrost provider (mainnet)
     const lucid = await Lucid.new(
       new Blockfrost(
