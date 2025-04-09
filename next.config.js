@@ -32,6 +32,18 @@ const nextConfig = {
       topLevelAwait: true,
     };
 
+    // Allow importing wasm files
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+    }
+
+    // Configure proper MIME type for wasm files
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: 'asset/resource',
+    })
+
     return config;
   },
   // Add special handling for problematic packages

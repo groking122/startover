@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Buffer } from 'buffer';
-import { COSESign1, COSEKey, Label } from '@emurgo/cardano-message-signing-nodejs';
-import { PublicKey } from '@emurgo/cardano-serialization-lib-nodejs';
-import { Ed25519Signature } from '@emurgo/cardano-serialization-lib-nodejs';
+import { COSESign1, COSEKey, Label } from '@emurgo/cardano-message-signing-browser';
+import { PublicKey } from '@emurgo/cardano-serialization-lib-browser';
+import { Ed25519Signature } from '@emurgo/cardano-serialization-lib-browser';
+
+export const runtime = 'edge';
 
 /**
  * Simple test endpoint to verify signature verification works with minimal data
