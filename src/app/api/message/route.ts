@@ -133,9 +133,9 @@ export async function POST(req: Request) {
     const { data, error } = await supabase
       .from('messages')
       .insert({
-        from,            // Full stake address
-        to,              // Full stake address 
-        to_address: toAddress, // Full base address when provided
+        payment_address_from: from,            // Full stake address
+        payment_address_to: to,              // Full stake address 
+        stake_address_to: toAddress, // Full base address when provided
         message
       });
       

@@ -15,25 +15,25 @@ export function resolveInboxPartners(messages: any[], userAddress: string): stri
   // Process each message to extract partners
   for (const msg of messages) {
     // Skip messages with invalid data
-    if (!msg.from || !msg.to) continue;
+    if (!msg.payment_address_from || !msg.payment_address_to) continue;
     
     // CASE 1: User is the sender
-    if (msg.from === userAddress) {
+    if (msg.payment_address_from === userAddress) {
       // Add the recipient's primary address
-      partners.add(msg.to);
+      partners.add(msg.payment_address_to);
       
       // Also add the secondary address if it exists and is different
-      if (msg.to_address && msg.to_address !== msg.to) {
-        partners.add(msg.to_address);
+      if (msg.stake_address_to && msg.stake_address_to !== msg.payment_address_to) {
+        partners.add(msg.stake_address_to);
       }
     } 
     // CASE 2: User is the recipient (by primary address)
-    else if (msg.to === userAddress) {
-      partners.add(msg.from);
+    else if (msg.payment_address_to === userAddress) {
+      partners.add(msg.payment_address_from);
     }
     // CASE 3: User is the recipient (by secondary/base address)
-    else if (isBase && msg.to_address === userAddress) {
-      partners.add(msg.from);
+    else if (isBase && msg.stake_address_to === userAddress) {
+      partners.add(msg.payment_address_from);
     }
   }
 

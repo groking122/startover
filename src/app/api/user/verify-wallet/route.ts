@@ -23,6 +23,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Comprehensive logging of the incoming verification payload
+    console.log("Incoming verification payload (backend):", {
+      signatureLength: signature.length,
+      signatureBytes: Buffer.from(signature, 'hex').length,
+      signaturePreview: signature.substring(0, 30) + "...",
+      messageLength: message.length,
+      messagePreview: message.substring(0, 30) + "...",
+      pubKeyLength: pubKey.length,
+      pubKeyBytes: Buffer.from(pubKey, 'hex').length,
+      pubKeyPreview: pubKey.substring(0, 30) + "...",
+      paymentAddressPreview: paymentAddress.substring(0, 20) + "..."
+    });
+
     // Enhanced signature validation
     console.log("Received signature data:", {
       signatureHexLength: signature.length,

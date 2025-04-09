@@ -446,6 +446,13 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       console.log("✅ Normalized signature length:", normalizedSignature.length, 
         "characters =", Buffer.from(normalizedSignature, 'hex').length, "bytes");
       
+      // Explicitly verify normalized signature before sending to backend
+      console.log("Normalized signature (frontend):", {
+        length: normalizedSignature.length,
+        bytes: Buffer.from(normalizedSignature, 'hex').length,
+        preview: normalizedSignature.substring(0, 30) + "..."
+      });
+      
       console.log("🔑 Final public key hex:", publicKeyHex);
       console.log("🔢 Payload sizes:", {
         stakeAddress: stakeAddr.length,
