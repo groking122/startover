@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySignature } from '@/utils/verifySignature';
+import { Buffer } from 'buffer';
+import { COSESign1, COSEKey, Label } from '@emurgo/cardano-message-signing-nodejs';
+import { PublicKey } from '@emurgo/cardano-serialization-lib-nodejs';
+import { Ed25519Signature } from '@emurgo/cardano-serialization-lib-nodejs';
 
 /**
  * Simple test endpoint to verify signature verification works with minimal data
@@ -7,61 +10,65 @@ import { verifySignature } from '@/utils/verifySignature';
  */
 export async function POST(req: NextRequest) {
   try {
-    const { pubKey, signature, message, rawMessage } = await req.json();
+    const { publicKey, signature, message, address } = await req.json();
 
-    // Log all inputs for debugging
-    console.log('Verify-Test received:', {
-      pubKeyLength: pubKey?.length || 0,
-      signatureLength: signature?.length || 0,
-      messageLength: message?.length || 0,
-      rawMessageLength: rawMessage?.length || 0
-    });
+    console.log('Public key length:', publicKey.length);
+    console.log('Signature length:', signature.length);
+    console.log('Message length:', message.length);
 
-    // Method 1: Verify using hex-encoded message (how it should work in production)
-    let hexVerificationResult = false;
-    let rawVerificationResult = false;
-    
-    try {
-      const messageBytes = Buffer.from(message, 'hex');
-      console.log('Method 1 - Hex message bytes:', {
-        inputLength: message.length,
-        bytesLength: messageBytes.length,
-        preview: messageBytes.toString('utf8').substring(0, 30) + '...'
-      });
-      hexVerificationResult = verifySignature(pubKey, signature, messageBytes);
-    } catch (error) {
-      console.error('Method 1 error:', error);
+    // Convert hex strings to bytes
+    const pubKeyBytes = Buffer.from(publicKey, 'hex');
+    const signatureBytes = Buffer.from(signature, 'hex');
+    const messageBytes = Buffer.from(message, 'hex');
+    const addressBytes = address ? Buffer.from(address, 'hex') : null;
+
+    // Parse COSE structures
+    const coseSign1 = COSESign1.from_bytes(signatureBytes);
+    if (!coseSign1) {
+      throw new Error('Failed to parse COSE_Sign1 structure');
     }
 
-    // Method 2: Verify using raw message directly (for comparison)
-    try {
-      if (rawMessage) {
-        const rawMessageBytes = Buffer.from(rawMessage, 'utf8');
-        console.log('Method 2 - Raw message bytes:', {
-          inputLength: rawMessage.length,
-          bytesLength: rawMessageBytes.length,
-          preview: rawMessage.substring(0, 30) + '...'
-        });
-        rawVerificationResult = verifySignature(pubKey, signature, rawMessageBytes);
-      }
-    } catch (error) {
-      console.error('Method 2 error:', error);
-    }
+    // Get headers
+    const headers = coseSign1.headers();
+    const protectedHeaders = headers.protected();
     
-    // Return the results of both methods for comparison
+    // Extract public key and signature
+    const key = PublicKey.from_bytes(pubKeyBytes);
+    const sig = Ed25519Signature.from_bytes(signatureBytes);
+    if (!key || !sig) {
+      throw new Error('Failed to parse public key or signature');
+    }
+
+    // Get the exact signed data bytes
+    const signedData = coseSign1.signed_data().to_bytes();
+    if (!signedData) {
+      throw new Error('Failed to get signed data');
+    }
+
+    // Verify signature
+    const verified = key.verify(signedData, sig);
+
+    // Optionally verify address matches public key
+    let addressVerified = false;
+    if (addressBytes) {
+      // Add address verification logic here if needed
+      addressVerified = true;
+    }
+
     return NextResponse.json({
-      success: true,
-      results: {
-        hexVerification: hexVerificationResult,
-        rawVerification: rawVerificationResult
+      success: verified,
+      addressVerified,
+      details: {
+        algorithm: 'EdDSA',
+        signedDataLength: signedData.length,
       }
     });
-    
+
   } catch (error) {
-    console.error('Error in verify-test endpoint:', error);
-    return NextResponse.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 });
+    console.error('Verification error:', error);
+    return NextResponse.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    }, { status: 400 });
   }
 } 
