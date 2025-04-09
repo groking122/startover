@@ -2,7 +2,6 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { verifySignature } from '@/utils/verifySignature';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,27 +11,31 @@ const supabase = createClient(
 // Utility to validate Cardano addresses
 function isValidCardanoAddress(address: string): boolean {
   if (!address) return false;
-  const isStakeAddress = address.startsWith('stake1');
   const isBaseAddress = address.startsWith('addr1') || address.startsWith('addr_test1');
-  return (isStakeAddress || isBaseAddress) && address.length >= 50;
+  return isBaseAddress && address.length >= 90;
 }
 
 export async function POST(req: Request) {
   try {
-    // Parse request body
-    const { from, to, toAddress, message } = await req.json();
+    // Parse request body with updated fields
+    const { 
+      payment_address_from, 
+      payment_address_to, 
+      message,
+      signature 
+    } = await req.json();
     
     // Extra validation for required fields
-    if (!from) {
+    if (!payment_address_from) {
       return NextResponse.json(
-        { error: 'Sender address is required' },
+        { error: 'Sender payment address is required' },
         { status: 400 }
       );
     }
     
-    if (!to) {
+    if (!payment_address_to) {
       return NextResponse.json(
-        { error: 'Recipient address is required' },
+        { error: 'Recipient payment address is required' },
         { status: 400 }
       );
     }
@@ -43,51 +46,40 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    if (!signature) {
+      return NextResponse.json(
+        { error: 'Message signature is required' },
+        { status: 400 }
+      );
+    }
     
     // Log the full addresses being used - don't truncate addresses in logs
     console.log('Storing message with parameters:', {
-      from: from,
-      to: to,
-      to_address: toAddress,
+      payment_address_from: payment_address_from,
+      payment_address_to: payment_address_to,
       messageLength: message.length,
-      messageSample: message.substring(0, 20) + (message.length > 20 ? '...' : '')
+      messageSample: message.substring(0, 20) + (message.length > 20 ? '...' : ''),
+      hasSignature: !!signature
     });
     
-    // Strict validation: 'to' field must be a stake address for proper inbox routing
-    if (!to.startsWith('stake1')) {
-      console.error('Invalid recipient: "to" field must be a stake address but received:', to);
-      return NextResponse.json(
-        { error: 'Recipient must be a stake address' },
-        { status: 400 }
-      );
-    }
-    
-    // Validate address formats (rather than just checking prefixes)
-    if (!isValidCardanoAddress(from) || !isValidCardanoAddress(to)) {
+    // Validate address formats (enforce base addresses)
+    if (!isValidCardanoAddress(payment_address_from) || !isValidCardanoAddress(payment_address_to)) {
       console.error('Invalid addresses detected:', { 
-        fromValid: isValidCardanoAddress(from), 
-        toValid: isValidCardanoAddress(to) 
+        fromValid: isValidCardanoAddress(payment_address_from), 
+        toValid: isValidCardanoAddress(payment_address_to) 
       });
       return NextResponse.json(
-        { error: 'Invalid sender or recipient address format' },
-        { status: 400 }
-      );
-    }
-    
-    // If toAddress is provided, validate it's a base address
-    if (toAddress && !toAddress.startsWith('addr1') && !toAddress.startsWith('addr_test1')) {
-      console.error('Invalid toAddress: Expected base address but received:', toAddress);
-      return NextResponse.json(
-        { error: 'toAddress must be a base address' },
+        { error: 'Invalid sender or recipient address format. Both must be base addresses.' },
         { status: 400 }
       );
     }
 
-    // Check if the user's session is expired (verification older than 1 hour)
+    // Check if the user is verified by looking up their payment address
     const userResponse = await supabase
       .from("users")
       .select("last_verified")
-      .eq("stake_address", from)
+      .eq("payment_address", payment_address_from)
       .single();
       
     if (!userResponse.data?.last_verified) {
@@ -108,7 +100,7 @@ export async function POST(req: Request) {
     const cooldownWindowMs = 3000; // 3 seconds
 
     // Use Supabase to track last message sent
-    const lastSentKey = `last_sent_${from}`;
+    const lastSentKey = `last_sent_${payment_address_from}`;
     const lastSentResponse = await supabase
       .from("rate_limits")
       .select("timestamp")
@@ -129,14 +121,14 @@ export async function POST(req: Request) {
       .from("rate_limits")
       .upsert({ key: lastSentKey, timestamp: new Date().toISOString() });
 
-    // Insert the message to database, ensuring full addresses are stored
+    // Insert the message to database, using the payment addresses
     const { data, error } = await supabase
       .from('messages')
       .insert({
-        from,            // Full stake address
-        to,              // Full stake address 
-        to_address: toAddress, // Full base address when provided
-        message
+        payment_address_from,
+        payment_address_to,
+        message,
+        signature: signature // Store the signature for audit purposes
       });
       
     if (error) {

@@ -14,34 +14,41 @@ import { toast } from 'react-hot-toast';
 import { useCardano } from '@cardano-foundation/cardano-connect-with-wallet';
 
 interface WalletIdentityContextType {
-  stakeAddress: string | null;
-  usedAddresses: string[] | null;
-  isVerified: boolean;
   isWalletLoading: boolean;
+  enabledWallet: string | null;
+  cardanoEnabledWallet: string | null;
+  stakeAddress: string | null;
+  baseAddress: string | null;
+  usedAddresses: string[];
+  isVerified: boolean;
   walletIdentityError: string | null;
-  refreshWalletIdentity: () => Promise<void>;
+  connectWallet: (walletKey: string) => void;
   disconnectWallet: () => void;
-  checkWalletConnection: () => Promise<void>;
   verifyWalletIdentityManually: () => Promise<void>;
+  refreshWalletIdentity: () => Promise<void>;
 }
 
 const WalletIdentityContext = createContext<WalletIdentityContextType>({
-  stakeAddress: null,
-  usedAddresses: null,
-  isVerified: false,
   isWalletLoading: false,
+  enabledWallet: null,
+  cardanoEnabledWallet: null,
+  stakeAddress: null,
+  baseAddress: null,
+  usedAddresses: [],
+  isVerified: false,
   walletIdentityError: null,
-  refreshWalletIdentity: async () => {},
+  connectWallet: async () => {},
   disconnectWallet: () => {},
-  checkWalletConnection: async () => {},
   verifyWalletIdentityManually: async () => {},
+  refreshWalletIdentity: async () => {},
 });
 
 export const useWalletIdentity = () => useContext(WalletIdentityContext);
 
 export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
   const [stakeAddress, setStakeAddress] = useState<string | null>(null);
-  const [usedAddresses, setUsedAddresses] = useState<string[] | null>(null);
+  const [baseAddress, setBaseAddress] = useState<string | null>(null);
+  const [usedAddresses, setUsedAddresses] = useState<string[]>([]);
   const [isVerified, setIsVerified] = useState(false);
   const [isWalletLoading, setIsWalletLoading] = useState(false);
   const [walletIdentityError, setWalletIdentityError] = useState<string | null>(null);
@@ -61,7 +68,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
   // Disconnect the wallet and reset related state
   const disconnectWallet = useCallback(() => {
     setStakeAddress(null);
-    setUsedAddresses(null);
+    setUsedAddresses([]);
     setPreviousStakeAddress(null);
     setIsVerified(false);
     setIsConnected(false);
@@ -221,7 +228,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
   }, [checkWalletConnection]);
 
   // Create a function to handle wallet identity verification
-  const verifyWalletIdentity = async (stakeAddr: string, api: any) => {
+  const verifyWalletIdentity = async (baseAddr: string, api: any) => {
     try {
       // Get payment addresses
       const usedAddresses = await api.getUsedAddresses();
@@ -232,11 +239,11 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       }
 
       // Get the first payment address (hex format)
-      const paymentAddressHex = usedAddresses[0];
+      const baseAddressHex = usedAddresses[0];
       
-      // Create a message to sign - include the current timestamp and stake address
+      // Create a message to sign - include the current timestamp and base address
       const messageObject = {
-        stakeAddress: stakeAddr,
+        baseAddress: baseAddr,
         timestamp: new Date().toISOString(),
         action: 'verify_wallet'
       };
@@ -250,10 +257,10 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       console.log("📝 Message converted to hex for signing:", messageHex);
       console.log("📤 messageHex (to sign):", messageHex);
       
-      // Sign the message with the payment address (using hex format)
+      // Sign the message with the base address (using hex format)
       console.log("⏳ Requesting wallet to sign data...");
       console.log("📤 messageHex (signed by wallet):", messageHex);
-      const result = await api.signData(paymentAddressHex, messageHex);
+      const result = await api.signData(baseAddressHex, messageHex);
       console.log("✅ Received sign result from wallet:", {
         keyLength: result.key?.length || 0,
         signatureLength: result.signature?.length || 0,
@@ -412,7 +419,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       
       console.log("🔑 Final public key hex:", publicKeyHex);
       console.log("🔢 Payload sizes:", {
-        stakeAddress: stakeAddr.length,
+        baseAddress: baseAddr.length,
         publicKey: publicKeyHex.length,
         rawSignature: rawSignatureHex.length,
         normalizedSignature: normalizedSignature.length,
@@ -430,7 +437,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
             'Accept': 'application/json'
           },
           body: JSON.stringify({
-            stakeAddress: stakeAddr,
+            baseAddress: baseAddr,
             publicKey: publicKeyHex,
             signature: normalizedSignature,
             message
@@ -463,12 +470,12 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       // Make actual API call to validate the signature with the best method found
       console.log("📤 Making actual verification request");
       const apiUrl = bestVerificationMethod 
-        ? `/api/user/verify?method=${bestVerificationMethod}&stakeAddress=${encodeURIComponent(stakeAddr)}` 
-        : `/api/user/verify?stakeAddress=${encodeURIComponent(stakeAddr)}`;
+        ? `/api/user/verify?method=${bestVerificationMethod}&baseAddress=${encodeURIComponent(baseAddr)}` 
+        : `/api/user/verify?baseAddress=${encodeURIComponent(baseAddr)}`;
         
       // Log the exact payload being sent to the API
       console.log("📦 Verification API payload:", {
-        stakeAddress: stakeAddr.substring(0, 10) + "...",
+        baseAddress: baseAddr.substring(0, 10) + "...",
         pubKeyLength: publicKeyHex.length,
         signatureLength: result.signature.length,
         messageLength: message.length,
@@ -500,7 +507,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
           'X-Requested-With': 'XMLHttpRequest'
         },
         body: JSON.stringify({
-          stakeAddress: stakeAddr,
+          baseAddress: baseAddr,
           pubKey: publicKeyHex,
           signature: result.signature, // Send the original signature from the wallet
           message
@@ -554,8 +561,8 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       // Update verification status based on API response (check verified field from response)
       if (verifyResult.verified) {
       setIsVerified(true);
-        verifiedStakeAddressRef.current = stakeAddr;
-        localStorage.setItem("verifiedStakeAddress", stakeAddr); // Store it for persistence
+        verifiedStakeAddressRef.current = baseAddr;
+        localStorage.setItem("verifiedStakeAddress", baseAddr); // Store it for persistence
         console.log("✅ Verified at:", new Date().toISOString());
       } else {
         setIsVerified(false);
@@ -603,20 +610,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     try {
       setIsWalletLoading(true);
       
-      console.log("Fetching stake address for wallet:", walletKey);
-      
-      // Get stake address directly from wallet (preferred method)
-      const directStakeAddress = await getStakeAddressFromWallet(walletKey);
-      
-      if (directStakeAddress) {
-        console.log("✅ Got stake address directly from wallet:", directStakeAddress.substring(0, 10) + "...");
-        setStakeAddress(directStakeAddress);
-        setIsVerified(false); // Still need to verify
-        return;
-      }
-      
-      // Fallback to traditional method if direct access fails
-      console.log("Direct wallet access failed, falling back to traditional method");
+      console.log("Fetching addresses for wallet:", walletKey);
       
       // Enable the wallet and get its API
       if (!window.cardano || !window.cardano[walletKey]) {
@@ -637,42 +631,30 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       // Store the used addresses in state
       setUsedAddresses(usedAddresses);
       
-      const paymentAddressHex = usedAddresses[0];
+      const baseAddressHex = usedAddresses[0];
       
-      // Get the stake address (reward address)
-      const rewardAddresses = await api.getRewardAddresses();
-      console.log("📦 rewardAddresses =", rewardAddresses);
-      
-      if (!rewardAddresses || rewardAddresses.length === 0) {
-        console.error("❌ No reward addresses returned from wallet");
+      // Convert hex to bech32 format
+      try {
+        // Import Address from Cardano serialization lib
+        const { Address } = await import('@emurgo/cardano-serialization-lib-asmjs');
+        const baseAddress = Address.from_bytes(Buffer.from(baseAddressHex, 'hex')).to_bech32();
+        console.log("🧪 Converted base address:", baseAddress);
+        
+        // Store the base address in state
+        setStakeAddress(baseAddress);
+        setBaseAddress(baseAddress);
+        setIsVerified(false); // Need to verify first
+      } catch (error) {
+        console.error("❌ Failed to convert base address to bech32:", error);
         setStakeAddress(null);
+        setBaseAddress(null);
         setIsVerified(false);
         verifiedStakeAddressRef.current = null;
-        return;
       }
-      
-      const stakeAddrHex = rewardAddresses[0];
-      console.log("✅ Got stake address hex:", stakeAddrHex?.substring(0, 10) + '...');
-      
-      // Convert hex to bech32 format using our utility function
-      const stakeAddrBech32 = await convertStakeAddressHexToBech32(stakeAddrHex);
-      console.log("🧪 Converted address about to be stored:", stakeAddrBech32);
-      
-      // Validate bech32 address
-      if (!stakeAddrBech32) {
-        console.error("❌ Failed to convert stake address to bech32");
-        setStakeAddress(null);
-        setIsVerified(false);
-        verifiedStakeAddressRef.current = null;
-        return;
-      }
-      
-      // Store the stake address in state
-      setStakeAddress(stakeAddrBech32);
-      setIsVerified(false); // Need to verify first
     } catch (error) {
-      console.error("Error fetching stake address:", error);
+      console.error("Error fetching addresses:", error);
       setStakeAddress(null);
+      setBaseAddress(null);
       setIsVerified(false);
       verifiedStakeAddressRef.current = null;
     } finally {
@@ -862,16 +844,46 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     }
   };
 
+  // Add or update the connectWallet function if it doesn't exist
+  const connectWallet = async (walletKey: string) => {
+    if (!walletKey) return;
+    
+    try {
+      setIsWalletLoading(true);
+      setWalletIdentityError(null);
+      
+      // Enable the wallet
+      if (!window.cardano || !window.cardano[walletKey]) {
+        throw new Error(`Wallet ${walletKey} not available`);
+      }
+      
+      // Set the enabled wallet
+      setEnabledWallet(walletKey);
+      localStorage.setItem('lastConnectedWallet', walletKey);
+      
+      // Fetch addresses for the wallet
+      await fetchStakeAddress(walletKey);
+    } catch (error) {
+      console.error("Error connecting wallet:", error);
+      setWalletIdentityError(error instanceof Error ? error.message : "Unknown error connecting wallet");
+    } finally {
+      setIsWalletLoading(false);
+    }
+  };
+
   const value = {
+    isWalletLoading,
+    enabledWallet,
+    cardanoEnabledWallet,
     stakeAddress,
+    baseAddress,
     usedAddresses,
     isVerified,
-    isWalletLoading,
     walletIdentityError,
-    refreshWalletIdentity,
+    connectWallet,
     disconnectWallet,
-    checkWalletConnection,
     verifyWalletIdentityManually,
+    refreshWalletIdentity,
   };
 
   return (

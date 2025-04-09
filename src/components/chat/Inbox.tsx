@@ -8,6 +8,7 @@ import { resolveInboxPartners } from '@/utils/inboxHelpers';
 
 interface InboxProps {
   stakeAddress: string | null;
+  baseAddress?: string | null;
   onSelect: (address: string) => void;
 }
 
@@ -19,16 +20,19 @@ export interface InboxRefType {
 // Determine if debug features should be shown
 const showDebugFeatures = process.env.NODE_ENV === 'development';
 
-const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, onSelect }, ref) => {
+const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, baseAddress, onSelect }, ref) => {
   const [partners, setPartners] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Determine which address to use - prefer baseAddress when available
+  const addressToUse = baseAddress || stakeAddress;
+
   // Function to fetch inbox data
   const fetchInbox = useCallback(async (showToast = false) => {
-    console.log('fetchInbox called with showToast:', showToast, 'stakeAddress:', stakeAddress);
-    if (!stakeAddress) {
-      console.error('fetchInbox: No stakeAddress provided');
+    console.log('fetchInbox called with showToast:', showToast, 'address:', addressToUse);
+    if (!addressToUse) {
+      console.error('fetchInbox: No address provided');
       return;
     }
     
@@ -38,8 +42,10 @@ const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, onSelect }, 
         toast.loading('Refreshing conversations...');
       }
       
-      console.log('fetchInbox: Fetching from:', `/api/inbox?address=${stakeAddress}`);
-      const res = await fetch(`/api/inbox?address=${stakeAddress}`);
+      const endpoint = `/api/inbox?address=${addressToUse}`;
+      console.log('fetchInbox: Fetching from:', endpoint);
+      
+      const res = await fetch(endpoint);
       if (!res.ok) {
         throw new Error('Failed to fetch inbox');
       }
@@ -64,7 +70,7 @@ const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, onSelect }, 
       setLoading(false);
       setRefreshing(false);
     }
-  }, [stakeAddress]);
+  }, [addressToUse]);
 
   // Expose the fetchInbox method to parent components via ref
   useImperativeHandle(ref, () => {
@@ -93,7 +99,7 @@ const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, onSelect }, 
 
   // Add a more robust method to fetch conversations
   const forceRefreshInbox = async () => {
-    if (!stakeAddress) {
+    if (!addressToUse) {
       toast.error('Connect your wallet first');
       return;
     }
@@ -107,7 +113,7 @@ const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, onSelect }, 
       // 1. First try the regular inbox endpoint
       console.log('Trying regular inbox endpoint...');
       try {
-        const inboxRes = await fetch(`/api/inbox?address=${stakeAddress}`, { 
+        const inboxRes = await fetch(`/api/inbox?address=${addressToUse}`, { 
           cache: 'no-store',
           headers: { 'pragma': 'no-cache', 'cache-control': 'no-cache' }
         });
@@ -138,7 +144,7 @@ const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, onSelect }, 
       // 2. If inbox failed, try messages endpoint directly
       console.log('Trying messages endpoint...');
       try {
-        const messagesRes = await fetch(`/api/messages?sender=${stakeAddress}`, {
+        const messagesRes = await fetch(`/api/messages?sender=${addressToUse}`, {
           cache: 'no-store',
           headers: { 'pragma': 'no-cache', 'cache-control': 'no-cache' }
         });
@@ -153,7 +159,7 @@ const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, onSelect }, 
             const messagesData = JSON.parse(messagesText);
             if (messagesData.messages && messagesData.messages.length > 0) {
               // Extract unique partners from messages using utility function
-              const partnersList = resolveInboxPartners(messagesData.messages, stakeAddress);
+              const partnersList = resolveInboxPartners(messagesData.messages, addressToUse);
               
               setPartners(partnersList);
               toast.dismiss('force-refresh');
@@ -179,7 +185,7 @@ const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, onSelect }, 
       
       // Show detailed diagnostic information in the browser console
       console.log('Diagnostic Information:');
-      console.log('Stake Address:', stakeAddress);
+      console.log('Address:', addressToUse);
       console.log('Current Partners State:', partners);
       console.log('User Agent:', navigator.userAgent);
       console.log('Current Time:', new Date().toISOString());
@@ -257,7 +263,7 @@ const Inbox = forwardRef<InboxRefType, InboxProps>(({ stakeAddress, onSelect }, 
             Try using the "Force Refresh" button above
           </p>
           <div className="mt-4 text-xs text-left bg-gray-800 p-2 rounded">
-            <p>Wallet Address: {stakeAddress ? `${stakeAddress.substring(0, 10)}...${stakeAddress.substring(stakeAddress.length - 6)}` : 'Not connected'}</p>
+            <p>Wallet Address: {addressToUse ? `${addressToUse.substring(0, 10)}...${addressToUse.substring(addressToUse.length - 6)}` : 'Not connected'}</p>
           </div>
         </div>
       )}

@@ -12,7 +12,29 @@ function isBaseAddress(address: string): boolean {
   return address.startsWith('addr1') || address.startsWith('addr_test1');
 }
 
-// New implementation using the resolveInboxPartners utility function
+// Verify the user is authenticated and their verification is current
+async function verifyUserAuthentication(address: string) {
+  // Check if the user is verified by looking up their payment address
+  const userResponse = await supabase
+    .from("users")
+    .select("last_verified")
+    .eq("payment_address", address)
+    .single();
+    
+  if (!userResponse.data?.last_verified) {
+    return { verified: false, error: "User not verified" };
+  }
+  
+  const userData = userResponse.data;
+  const age = Date.now() - new Date(userData.last_verified).getTime();
+  if (age > 60 * 60 * 1000) { // 1 hour expiration
+    return { verified: false, error: "Session expired, re-verify" };
+  }
+  
+  return { verified: true };
+}
+
+// Updated implementation to use payment addresses with verification
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -25,14 +47,28 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Check if provided address is a base address
-    const isBase = address.startsWith('addr1') || address.startsWith('addr_test1');
+    // Ensure the provided address is a base address
+    if (!isBaseAddress(address)) {
+      return NextResponse.json(
+        { error: 'Address must be a valid base address (starts with addr1)' },
+        { status: 400 }
+      );
+    }
     
-    // First get all messages where the user is either the sender or recipient (by stake address)
+    // Check if user is verified before proceeding
+    const verificationResult = await verifyUserAuthentication(address);
+    if (!verificationResult.verified) {
+      return NextResponse.json(
+        { error: verificationResult.error },
+        { status: 401 }
+      );
+    }
+    
+    // Get all messages where the user is either the sender or recipient
     const { data, error } = await supabase
       .from('messages')
-      .select('from, to, to_address')
-      .or(`from.eq.${address},to.eq.${address}`)
+      .select('payment_address_from, payment_address_to')
+      .or(`payment_address_from.eq.${address},payment_address_to.eq.${address}`)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -43,29 +79,22 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // For base addresses, also get messages where to_address matches the base address
-    let additionalData: any[] = [];
-    if (isBase) {
-      const { data: toAddressData, error: toAddressError } = await supabase
-        .from('messages')
-        .select('from, to, to_address')
-        .eq('to_address', address)
-        .order('created_at', { ascending: false });
-        
-      if (!toAddressError && toAddressData) {
-        additionalData = toAddressData;
-      }
-    }
+    // Extract unique conversation partners from the results
+    const partners = new Set<string>();
     
-    // Combine the results
-    const allMessages = [...(data || []), ...additionalData];
-
-    // Use the shared utility function to extract unique partners
-    const partners = resolveInboxPartners(allMessages, address);
+    (data || []).forEach(msg => {
+      if (msg.payment_address_from === address) {
+        // This is a message sent by the user, add the recipient
+        partners.add(msg.payment_address_to);
+      } else {
+        // This is a message received by the user, add the sender
+        partners.add(msg.payment_address_from);
+      }
+    });
 
     return NextResponse.json({
       success: true,
-      partners: partners
+      partners: Array.from(partners)
     });
 
   } catch (error) {
@@ -77,30 +106,44 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Add POST method for compatibility with all-partners endpoint
+// Add POST method with verification checks
 export async function POST(req: Request) {
   try {
     // Parse the request body
-    const { stakeAddress } = await req.json();
+    const { address } = await req.json();
     
     // Validate inputs
-    if (!stakeAddress) {
+    if (!address) {
       return NextResponse.json(
-        { error: 'Stake address is required' },
+        { error: 'Address is required' },
         { status: 400 }
       );
     }
     
-    // Check if provided address is a base address
-    const isBase = stakeAddress.startsWith('addr1') || stakeAddress.startsWith('addr_test1');
+    // Ensure the provided address is a base address
+    if (!isBaseAddress(address)) {
+      return NextResponse.json(
+        { error: 'Address must be a valid base address (starts with addr1)' },
+        { status: 400 }
+      );
+    }
     
-    console.log(`Fetching all partners for address: ${stakeAddress} (Base address: ${isBase})`);
+    // Check if user is verified before proceeding
+    const verificationResult = await verifyUserAuthentication(address);
+    if (!verificationResult.verified) {
+      return NextResponse.json(
+        { error: verificationResult.error },
+        { status: 401 }
+      );
+    }
     
-    // First get all messages where the user is either the sender or recipient
+    console.log(`Fetching all partners for address: ${address}`);
+    
+    // Get all messages where the user is either the sender or recipient
     const messagesQuery = await supabase
       .from('messages')
-      .select('from, to, to_address, created_at')
-      .or(`from.eq.${stakeAddress},to.eq.${stakeAddress}`)
+      .select('payment_address_from, payment_address_to, created_at')
+      .or(`payment_address_from.eq.${address},payment_address_to.eq.${address}`)
       .order('created_at', { ascending: false });
     
     if (messagesQuery.error) {
@@ -111,33 +154,26 @@ export async function POST(req: Request) {
       );
     }
     
-    // For base addresses, also get messages where to_address matches
-    let additionalMessages: any[] = [];
-    if (isBase) {
-      const additionalQuery = await supabase
-        .from('messages')
-        .select('from, to, to_address, created_at')
-        .eq('to_address', stakeAddress)
-        .order('created_at', { ascending: false });
-        
-      if (!additionalQuery.error && additionalQuery.data) {
-        additionalMessages = additionalQuery.data;
+    // Extract unique conversation partners from the results
+    const partners = new Set<string>();
+    
+    (messagesQuery.data || []).forEach(msg => {
+      if (msg.payment_address_from === address) {
+        // This is a message sent by the user, add the recipient
+        partners.add(msg.payment_address_to);
+      } else {
+        // This is a message received by the user, add the sender
+        partners.add(msg.payment_address_from);
       }
-    }
+    });
     
-    // Combine all messages
-    const allMessages = [...(messagesQuery.data || []), ...additionalMessages];
-    
-    console.log(`Found ${allMessages.length} total messages`);
-    
-    // Use the utility function to extract unique partners
-    const partnersArray = resolveInboxPartners(allMessages, stakeAddress);
+    const partnersArray = Array.from(partners);
     console.log(`Found ${partnersArray.length} unique conversation partners`);
     
     return NextResponse.json({
       success: true,
       partners: partnersArray,
-      totalMessages: allMessages.length
+      totalMessages: messagesQuery.data?.length || 0
     });
     
   } catch (error) {
@@ -150,4 +186,4 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-} 
+}

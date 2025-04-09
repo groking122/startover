@@ -12,7 +12,7 @@ import ApiStatusChecker from './ApiStatusChecker';
 export default function HomeClient() {
   const [recipient, setRecipient] = useState<string>('');
   const [mode, setMode] = useState<'inbox' | 'manual'>('inbox');
-  const { stakeAddress, isVerified } = useWalletIdentity();
+  const { stakeAddress, baseAddress, isVerified } = useWalletIdentity();
   const inboxRef = useRef<{ fetchInbox: (showToast?: boolean) => Promise<void> }>(null);
   
   // Function to handle starting a new chat
@@ -35,8 +35,11 @@ export default function HomeClient() {
   const handleRefreshConversations = useCallback(() => {
     console.log('handleRefreshConversations called, inboxRef:', inboxRef.current);
     
-    // Check if stakeAddress is available first
-    if (!stakeAddress) {
+    // Use baseAddress if available, fall back to stakeAddress
+    const addressToUse = baseAddress || stakeAddress;
+    
+    // Check if address is available
+    if (!addressToUse) {
       console.log('Cannot refresh conversations: No wallet connected');
       return;
     }
@@ -64,14 +67,17 @@ export default function HomeClient() {
         console.log('Inbox component not mounted, cannot refresh');
       }
     }
-  }, [stakeAddress, mode, recipient]);
+  }, [baseAddress, stakeAddress, mode, recipient]);
+
+  // Use baseAddress if available, otherwise fall back to stakeAddress for rendering decisions
+  const walletConnected = baseAddress || stakeAddress;
 
   return (
     <main className="flex flex-col h-screen bg-gray-900 text-white">
       <TopBar onRefreshConversations={handleRefreshConversations} />
       
       <div className="flex-1 container mx-auto p-4 flex flex-col">
-        {!stakeAddress ? (
+        {!walletConnected ? (
           <div className="flex-1 flex flex-col items-center justify-center">
             <h1 className="text-3xl font-bold mb-4">Connect your wallet</h1>
           </div>
@@ -98,6 +104,7 @@ export default function HomeClient() {
               <Inbox
                 ref={inboxRef}
                 stakeAddress={stakeAddress}
+                baseAddress={baseAddress}
                 onSelect={(partner) => {
                   setRecipient(partner);
                   console.log('Partner selected:', partner);
@@ -110,7 +117,7 @@ export default function HomeClient() {
                 <div className="flex mb-6">
                   <input 
                     type="text" 
-                    placeholder="Enter any Cardano address (base or stake)"
+                    placeholder="Enter recipient base address (starts with addr1)"
                     className="flex-1 bg-gray-800 text-white border border-gray-700 rounded-l p-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     value={recipient}
                     onChange={(e) => setRecipient(e.target.value)}
