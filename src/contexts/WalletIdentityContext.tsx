@@ -442,7 +442,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       console.log("✅ Signature length:", rawSignatureHex.length, "characters (should be ~128)");
       
       // Normalize signature to ensure it's exactly 64 bytes
-      const normalizedSignature = normalizeEd25519Signature(rawSignatureHex);
+      const normalizedSignature = await normalizeEd25519Signature(rawSignatureHex);
       console.log("✅ Normalized signature length:", normalizedSignature.length, 
         "characters =", Buffer.from(normalizedSignature, 'hex').length, "bytes");
       
@@ -822,8 +822,8 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     }
   };
 
-  // Update the normalizeEd25519Signature function with more detailed logging
-  const normalizeEd25519Signature = (sigHex: string): string => {
+  // Update the normalizeEd25519Signature function with proper CBOR decoding
+  const normalizeEd25519Signature = async (sigHex: string): Promise<string> => {
     try {
       console.log("🔎 Starting signature normalization with raw signature:");
       console.log("📊 RAW INPUT SIGNATURE:", { 
@@ -861,110 +861,132 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         last8Bytes: Array.from(sigBuffer.slice(-8)).map(b => b.toString(16).padStart(2, '0')).join(' ')
       });
 
-      // Detect specific signature formats based on initial bytes
-      // Standard COSE_Sign1 typically starts with 0x84 (array of 4 elements)
-      const isCOSESign1 = sigBuffer[0] === 0x84;
-      // Some wallets include specific signature prefixes
-      const hasEternlPrefix = sigBuffer.slice(0, 4).toString('hex') === '82a366646f6d';
+      // IMPROVED: Better format detection for CBOR/COSE signatures
+      const isCOSESign1 = sigBuffer[0] === 0x84; // COSE_Sign1 format
+      const isEternlFormat = sigBuffer[0] === 0x82; // Eternl specific format
       
       console.log("📊 Signature format detection:", {
         isCOSESign1,
-        hasEternlPrefix,
+        isEternlFormat,
         firstByte: sigBuffer[0]?.toString(16),
         first4Bytes: sigBuffer.slice(0, 4).toString('hex'),
       });
       
-      // Handle different signature formats
+      // If it's already a 64-byte signature, return it directly
       if (sigBuffer.length === 64) {
-        // Already the correct size - this is what we want
         console.log("✅ Signature is already the correct 64-byte format");
         return sigHex;
       }
-      else if (isCOSESign1 && sigBuffer.length >= 64) {
-        // Standard COSE_Sign1 format with CBOR encoding
-        console.log("🔍 Detected COSE_Sign1 signature - extracting signature data");
-        
-        try {
-          // For COSE_Sign1, signature is the last element (index 3) of the CBOR array
-          // This can vary slightly based on wallet implementation
-          console.log("🧪 Will try to extract signature from COSE_Sign1 structure");
-          
-          // Try common CIP-8 signature extraction pattern (last 64 bytes)
-          const extracted = sigBuffer.slice(sigBuffer.length - 64);
-          console.log("📊 Extracted signature from COSE:", { 
-            bytes: extracted.length,
-            preview: extracted.toString('hex').substring(0, 30) + "..." 
-          });
-          
-          if (extracted.length !== 64) {
-            throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
-          }
-          return extracted.toString('hex');
-        } catch (error) {
-          console.error("❌ Error extracting from COSE:", error);
-          // Fall through to other extraction methods
-        }
-      }
-      else if (hasEternlPrefix && sigBuffer.length >= 70) {
-        // Eternl-specific format
-        console.log("🔍 Detected Eternl-specific signature format (70+ bytes)");
-        // Eternl often puts signature at bytes 3-67
-        const extracted = sigBuffer.slice(3, 67);
-        console.log("📊 Extracted signature for Eternl format:", { 
-          bytes: extracted.length,
-          preview: extracted.toString('hex').substring(0, 30) + "..." 
-        });
-        
-        if (extracted.length !== 64) {
-          throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
-        }
-        return extracted.toString('hex');
-      }
-      else if (sigBuffer.length === 70) {
-        // Generic 70-byte signature format (common in many wallets)
-        console.log("🔍 Detected 70-byte signature - trying standard extraction at bytes 3-67");
-        const extracted = sigBuffer.slice(3, 67);
-        console.log("📊 Extracted signature from 70 bytes:", { 
-          bytes: extracted.length,
-          preview: extracted.toString('hex').substring(0, 30) + "..." 
-        });
-        
-        if (extracted.length !== 64) {
-          throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
-        }
-        return extracted.toString('hex');
-      }
-      else if (sigBuffer.length === 72) {
-        // Alternative 72-byte format
-        console.log("🔍 Detected 72-byte signature - trying standard extraction at bytes 4-68");
-        const extracted = sigBuffer.slice(4, 68);
-        console.log("📊 Extracted signature from 72 bytes:", { 
-          bytes: extracted.length,
-          preview: extracted.toString('hex').substring(0, 30) + "..." 
-        });
-        
-        if (extracted.length !== 64) {
-          throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
-        }
-        return extracted.toString('hex');
-      }
-      else if (sigBuffer.length > 64) {
-        // For other formats, try to extract the last 64 bytes as a fallback
-        console.log(`🔍 Detected ${sigBuffer.length}-byte signature - extracting last 64 bytes as fallback`);
-        const extracted = sigBuffer.slice(sigBuffer.length - 64);
-        console.log("📊 Extracted signature (fallback method):", { 
-          bytes: extracted.length,
-          preview: extracted.toString('hex').substring(0, 30) + "..." 
-        });
-        
-        if (extracted.length !== 64) {
-          throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
-        }
-        return extracted.toString('hex');
-      }
       
-      // If we couldn't extract a 64-byte signature
-      throw new Error(`Invalid signature length: ${sigBuffer.length} bytes. Must be exactly 64 bytes.`);
+      // CRITICAL IMPROVEMENT: Use explicit CBOR decoding for COSE structures
+      const extractSignatureWithCbor = async (sigBuffer: Buffer): Promise<Buffer> => {
+        try {
+          // Dynamically import cbor
+          const cbor = await import('cbor');
+          console.log("🔍 Attempting CBOR decode of signature...");
+          
+          // Decode the CBOR structure
+          const decoded = await cbor.decodeFirst(sigBuffer);
+          console.log("🔍 Decoded CBOR structure:", decoded);
+          
+          // Handle different CBOR structures based on common wallet formats
+          
+          // COSE_Sign1 format: [protected, unprotected, payload, signature]
+          if (Array.isArray(decoded) && decoded.length === 4 && Buffer.isBuffer(decoded[3])) {
+            console.log("✅ Detected standard COSE_Sign1 structure, signature at index 3");
+            const extractedSig = decoded[3];
+            if (extractedSig.length !== 64) {
+              console.warn(`⚠️ Extracted signature length is ${extractedSig.length} bytes, expected 64`);
+            }
+            return extractedSig;
+          }
+          
+          // Eternl format often uses [headers, signature] structure
+          if (Array.isArray(decoded) && decoded.length === 2 && Buffer.isBuffer(decoded[1])) {
+            console.log("✅ Detected likely Eternl format, signature at index 1");
+            const extractedSig = decoded[1];
+            if (extractedSig.length !== 64) {
+              console.warn(`⚠️ Extracted signature length is ${extractedSig.length} bytes, expected 64`);
+            }
+            return extractedSig;
+          }
+          
+          // Some wallets wrap the signature in an object
+          if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) {
+            // Look for common signature property names
+            const propNames = ['signature', 'data', 'value'];
+            for (const prop of propNames) {
+              if (decoded[prop] && Buffer.isBuffer(decoded[prop])) {
+                console.log(`✅ Found signature in object property: ${prop}`);
+                const extractedSig = decoded[prop];
+                if (extractedSig.length !== 64) {
+                  console.warn(`⚠️ Extracted signature length is ${extractedSig.length} bytes, expected 64`);
+                }
+                return extractedSig;
+              }
+            }
+          }
+          
+          // If none of the above patterns match, throw error
+          throw new Error("Could not locate 64-byte signature in CBOR structure");
+        } catch (error) {
+          console.error("❌ CBOR decoding failed:", error);
+          throw error;
+        }
+      };
+      
+      // Handle signature extraction based on format
+      try {
+        // First try explicit CBOR decoding for COSE/CBOR signatures
+        if (isCOSESign1 || isEternlFormat || sigBuffer[0] >= 0x80) { // CBOR major type 5-7
+          try {
+            const extracted = await extractSignatureWithCbor(sigBuffer);
+            console.log("✅ Successfully extracted signature with CBOR:", {
+              length: extracted.length,
+              hex: extracted.toString('hex').substring(0, 30) + '...'
+            });
+            return extracted.toString('hex');
+          } catch (cborError) {
+            console.error("❌ CBOR extraction failed:", cborError);
+            // Fall through to fallback methods
+          }
+        }
+        
+        // If CBOR extraction fails or format isn't CBOR, try common fixed offsets
+        
+        // Common 70-byte format (often signature at bytes 3-67)
+        if (sigBuffer.length === 70) {
+          console.log("🔍 Trying 70-byte format extraction (bytes 3-67)");
+          const extracted = sigBuffer.slice(3, 67);
+          if (extracted.length === 64) {
+            console.log("✅ Successfully extracted 64 bytes from 70-byte format");
+            return extracted.toString('hex');
+          }
+        }
+        
+        // Common 72-byte format (often signature at bytes 4-68)
+        if (sigBuffer.length === 72) {
+          console.log("🔍 Trying 72-byte format extraction (bytes 4-68)");
+          const extracted = sigBuffer.slice(4, 68);
+          if (extracted.length === 64) {
+            console.log("✅ Successfully extracted 64 bytes from 72-byte format");
+            return extracted.toString('hex');
+          }
+        }
+        
+        // Last resort: try to extract last 64 bytes
+        console.log("🔍 Trying last resort: extract last 64 bytes");
+        const lastResort = sigBuffer.slice(-64);
+        if (lastResort.length === 64) {
+          console.log("⚠️ Extracted signature using last resort method (last 64 bytes)");
+          return lastResort.toString('hex');
+        }
+        
+        throw new Error(`Could not extract a valid 64-byte signature from ${sigBuffer.length}-byte input`);
+      } catch (extractError) {
+        console.error("❌ All signature extraction methods failed:", extractError);
+        throw new Error(`Failed to extract Ed25519 signature: ${extractError instanceof Error ? extractError.message : String(extractError)}`);
+      }
     } catch (error) {
       console.error("❌ Signature normalization error:", error);
       throw error;
