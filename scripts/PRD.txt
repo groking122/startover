@@ -1,0 +1,315 @@
+# Overview
+
+Cardano Wallet Chat is a secure messaging platform that leverages Cardano blockchain wallets for authentication. In a world where privacy and security are paramount, our application allows users to communicate directly using their blockchain identity without relying on centralized identity providers or exposing personal information.
+
+By using both stake and payment addresses from Cardano wallets, we create a two-factor authentication system that prevents impersonation attacks while maintaining the simplicity of wallet-based authentication. Our platform addresses the growing need for secure, decentralized communication tools within the Cardano ecosystem and blockchain space at large.
+
+The primary value proposition is enabling secure, identity-verified messaging without requiring phone numbers, email addresses, or personal information - just a Cardano wallet that the user already owns and controls.
+
+# Core Features
+
+## Wallet-Based Authentication
+- **What it does**: Allows users to authenticate using their Cardano wallet (Eternl, Nami, Flint, etc.) by signing a message that proves ownership of both stake and payment addresses.
+- **Why it's important**: Provides a secure, decentralized authentication method without requiring personal information or centralized identity providers.
+- **How it works**: Users connect their wallet, sign a verification message containing their stake and payment addresses, and the server verifies the signature cryptographically.
+
+## Secure Messaging
+- **What it does**: Enables sending text messages to any Cardano stake address with verification that ensures only legitimate wallet owners can send messages.
+- **Why it's important**: Creates a trusted communication channel between Cardano wallet holders, enabling confidential discussions secured by blockchain identity.
+- **How it works**: Messages are stored in a database with Row-Level Security ensuring only verified senders can post messages. Recipients can view message history based on their stake address.
+
+## Dual-Address Verification
+- **What it does**: Verifies both stake and payment addresses during authentication to prevent flanken address impersonation attacks.
+- **Why it's important**: Provides significantly higher security than single-address verification, protecting users from sophisticated impersonation attempts.
+- **How it works**: During verification, both the stake address (for account identity) and payment address (for transaction capability) are verified through the wallet signature.
+
+## Session Management
+- **What it does**: Maintains a secure session for authenticated users with automatic expiration after one hour for security.
+- **Why it's important**: Balances security with user convenience, avoiding the need to sign messages for every action while still maintaining security boundaries.
+- **How it works**: Upon verification, a session timestamp is stored server-side and in encrypted local storage, with both client and server checking for expiration.
+
+## Rate-Limited Protection
+- **What it does**: Prevents abuse by limiting the frequency of verification attempts and message sending.
+- **Why it's important**: Protects against spam, brute force attacks, and server resource exhaustion without compromising legitimate use.
+- **How it works**: Database-tracked rate limiting enforces cooldown periods between actions, with server-side enforcement that cannot be bypassed.
+
+# User Experience
+
+## User Personas
+
+### Crypto Native User - "Alex"
+- Experienced with blockchain wallets and applications
+- Values security and privacy in communications
+- Already comfortable with wallet signature requests
+- Primary goal: Secure messaging with other Cardano community members
+
+### Business User - "Jordan"
+- Uses Cardano for business applications
+- Needs to communicate securely with clients/partners
+- Requires verification of counterparty identity
+- Primary goal: Verified communication channel for business discussions
+
+### Developer - "Taylor"
+- Building on Cardano ecosystem
+- Collaborates with other developers and projects
+- Needs technical discussions with wallet verification
+- Primary goal: Team collaboration secured by wallet identity
+
+## Key User Flows
+
+### First-Time Authentication
+1. User visits application and clicks "Connect Wallet"
+2. User selects their Cardano wallet from available options
+3. Application requests wallet connection via wallet extension
+4. User approves connection in their wallet extension
+5. User clicks "Verify Wallet" to prove ownership
+6. Wallet extension prompts user to sign verification message
+7. Upon successful verification, user is authenticated for 1 hour
+
+### Sending a Message
+1. User enters recipient's stake address or selects from previous contacts
+2. User types message in the input field
+3. User clicks "Send" button
+4. System verifies user has valid session or prompts for re-verification
+5. Message is sent and appears in the conversation thread
+6. Recipient can view the message when they access the application
+
+### Viewing Message History
+1. User connects and verifies wallet
+2. System automatically loads recent conversations
+3. User selects a conversation to view full message history
+4. Messages appear with verification status and timestamp
+5. New messages automatically appear in real-time (future enhancement)
+
+## UI/UX Considerations
+
+### Accessibility
+- Clear status indicators for wallet connection and verification
+- Obvious error messages for authentication issues
+- Simple, intuitive interface for messaging
+- Responsive design for all device sizes
+
+### Security Indicators
+- Visual indicators showing verification status
+- Timestamps of last verification
+- Clear display of sender addresses for message verification
+- Simple explanation of security model for new users
+
+### Performance
+- Fast loading of recent messages
+- Background loading of older message history
+- Minimal wallet interaction requirements
+- Responsive interface even during blockchain operations
+
+# Technical Architecture
+
+## System Components
+- **Frontend**: Next.js React application with Tailwind CSS for styling
+- **Backend**: Next.js API routes for server-side verification 
+- **Database**: Supabase PostgreSQL database with Row-Level Security
+- **Authentication**: Cardano wallet-based authentication (CIP-30 standard)
+- **Messaging**: Asynchronous message exchange between wallet addresses
+
+## Data Models
+
+### Users Table
+- `stake_address` (Primary Key): Cardano stake address (starts with "stake1")
+- `payment_address`: Cardano payment/base address (starts with "addr1")
+- `public_key`: Public key from wallet for verification
+- `last_verified`: Timestamp of last successful verification
+- `created_at`: Timestamp of first registration
+
+### Messages Table
+- `id` (Primary Key): Unique message identifier
+- `from`: Sender's stake address (Foreign Key to Users)
+- `to`: Recipient's stake address
+- `to_address`: Optional recipient's payment address for enhanced security
+- `message`: Text content of the message
+- `verified`: Flag indicating if message has direct signature verification
+- `created_at`: Timestamp when message was sent
+
+### Rate Limits Table
+- `key` (Primary Key): Unique rate limit identifier (e.g., "verify_stake1...")
+- `timestamp`: Last action timestamp for rate limiting
+
+## APIs and Integrations
+- **Cardano Wallet**: Integration with wallet extensions via CIP-30 standard
+- **Verification API**: `/api/user/verify` for wallet signature verification
+- **Messaging API**: `/api/message` for sending and receiving messages
+- **Rate Limiting**: Built-in rate limiting to prevent abuse
+
+## Infrastructure Requirements
+- **Hosting**: Vercel for Next.js application deployment
+- **Database**: Supabase cloud instance
+- **Security**: Row-Level Security policies for data protection
+- **Monitoring**: Error logging for security and verification issues
+
+# Development Roadmap
+
+## MVP Requirements (Phase 1)
+
+### Core Authentication System
+- [x] Wallet connection via Cardano wallet extensions
+- [x] Dual-address verification (stake + payment addresses)
+- [x] Session-based authentication (1-hour validity)
+- [x] Server-side verification of wallet signatures
+- [x] Secure storage of verification status
+
+### Basic Messaging Functionality
+- [x] Send messages to any stake address
+- [x] Receive messages from verified wallets
+- [x] Display message history between users
+- [x] Include both stake and payment addresses in messages
+- [x] Apply rate limiting to prevent spam
+
+### Security Features
+- [x] Server-side validation of all messages
+- [x] Row-Level Security in database
+- [x] Rate limiting for verification and messaging
+- [x] Automatic session expiration
+
+### User Interface
+- [ ] Simple chat interface with message bubbles
+- [ ] Wallet connection button
+- [ ] Verification status indicator
+- [ ] Message input and send controls
+- [ ] Display of sender stake address in messages
+
+## Future Enhancements (Phase 2)
+
+### Enhanced Messaging
+- [ ] Message pagination for efficient loading
+- [ ] Read receipts and online status
+- [ ] Message deletion and editing
+- [ ] Rich text formatting
+- [ ] File and image attachments
+
+### Improved Security
+- [ ] Per-message signature verification option
+- [ ] Multi-device session management
+- [ ] Blocked users list
+- [ ] Admin tools for moderation
+- [ ] Transaction verification integration
+
+### User Experience
+- [ ] Contact list/address book
+- [ ] User profiles with optional metadata
+- [ ] Theme customization
+- [ ] Mobile responsiveness improvements
+- [ ] Notification system
+
+### Advanced Features (Phase 3)
+- [ ] Group chats with multiple participants
+- [ ] End-to-end encryption for messages
+- [ ] Smart contract integration
+- [ ] Token-gated chats and communities
+- [ ] Cross-chain messaging support
+
+# Logical Dependency Chain
+
+## Foundation (Must Complete First)
+1. Wallet connection integration
+2. Basic user data model with stake addresses
+3. Wallet signature verification
+4. Session persistence mechanism
+
+## Core Functionality (Build Upon Foundation)
+5. Message sending between addresses
+6. Message history retrieval
+7. Basic UI for messages and inputs
+8. Session expiration handling
+
+## Security Enhancements (Parallel with Core)
+9. Dual-address verification
+10. Server-side verification checks
+11. Rate limiting implementation
+12. Row-Level Security policies
+
+## User Experience (After Core Functions Work)
+13. Improved UI with verification indicators
+14. Better error messaging
+15. Wallet connection status display
+16. Loading states and optimistic updates
+
+## Scaling Features (After MVP is Stable)
+17. Pagination for large message histories
+18. Real-time updates with Supabase Realtime
+19. Contact management
+20. Profile customization
+
+# Risks and Mitigations
+
+## Technical Challenges
+
+### Wallet Integration Complexity
+- **Risk**: Different Cardano wallets implement CIP-30 standard differently
+- **Mitigation**: Implement robust error handling and multiple verification methods
+- **Fallback**: Support both CIP-8 COSE and raw signature formats
+
+### Security Vulnerabilities
+- **Risk**: Authentication bypasses or impersonation attacks
+- **Mitigation**: Dual-address verification and server-side checks
+- **Fallback**: Per-message signature option for highest security
+
+### Database Scaling
+- **Risk**: Performance issues with many messages or users
+- **Mitigation**: Implement pagination and indexing
+- **Fallback**: Archive old messages and optimize queries
+
+## User Experience Risks
+
+### Wallet UX Friction
+- **Risk**: Users unfamiliar with signing messages with wallets
+- **Mitigation**: Clear guidance and error messages
+- **Fallback**: Session-based approach to minimize signing requests
+
+### Verification Failures
+- **Risk**: Wallet signature verification issues causing user frustration
+- **Mitigation**: Multiple verification methods and clear error messages
+- **Fallback**: Manual support process for verification issues
+
+### Performance Issues
+- **Risk**: Slow loading of messages or verification
+- **Mitigation**: Optimize database queries and implement caching
+- **Fallback**: Progressive loading and background processing
+
+# Appendix
+
+## Technical Specifications
+
+### Cardano Wallet Integration
+- **Standard**: CIP-30 for wallet integration
+- **Signing**: CIP-8 for COSE signatures
+- **Address Formats**: Support for both Shelley addresses (stake1, addr1)
+- **Libraries**: Cardano Serialization Lib for cryptographic operations
+
+### Verification Process
+1. Request signature from wallet using `signData()` method
+2. Construct verification payload with both stake and payment addresses
+3. Verify signature using Ed25519 verification
+4. Store verification status with timestamp
+5. Implement 1-hour expiration for security
+
+### Database Schema SQL
+```sql
+-- See db_schema_updates.sql for full schema details
+ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_address text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS verified boolean DEFAULT false;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS to_address text;
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key text PRIMARY KEY,
+  timestamp timestamptz NOT NULL
+);
+```
+
+### Rate Limiting Specification
+- **Verification**: Maximum 1 attempt per 10 seconds per stake address
+- **Messaging**: Maximum 1 message per 3 seconds per sender
+- **Implementation**: Database-based rate limiting with timestamp tracking
+
+### Security Best Practices
+- All verification on server-side
+- No client-side storage of sensitive keys
+- Expiration of sessions after 1 hour
+- Row-Level Security for database protection
+- Regular security audits 

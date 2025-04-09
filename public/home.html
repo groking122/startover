@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Chunked Double-Label Chat Demo (100 per side)</title>
+  <style>
+    body { font-family: 'Helvetica', 'Arial', sans-serif; margin: 0; padding: 0; background-color: #eae6df; }
+    .top-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; background-color: #ededed; border-bottom: 1px solid #ccc; }
+    .top-buttons { display: flex; gap: 8px; }
+    #connect-btn, #refresh-btn, #new-msg-btn { padding: 8px 14px; font-size: 14px; cursor: pointer; }
+    #status { font-weight: bold; }
+    .container { display: flex; width: 90%; max-width: 1200px; height: 600px; margin: 20px auto; border: 1px solid #ccc; border-radius: 5px; overflow: hidden; background-color: #fff; }
+    .chat-list { width: 30%; border-right: 1px solid #ccc; background-color: #f8f8f8; overflow-y: auto; }
+    .chat-list-item { padding: 15px 20px; cursor: pointer; border-bottom: 1px solid #eee; transition: background-color 0.2s; }
+    .chat-list-item:hover { background-color: #e9e9e9; }
+    .chat-list-item.active { background-color: #ddd; font-weight: bold; }
+    .chat-container { flex: 1; display: flex; flex-direction: column; background-color: #eae6df; }
+    .chat-header { padding: 10px; background-color: #ededed; border-bottom: 1px solid #ccc; }
+    .chat-header h2 { margin: 0; font-size: 1rem; font-weight: normal; }
+    .messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; }
+    .message-row { display: flex; margin-bottom: 10px; }
+    .bubble { padding: 8px 12px; border-radius: 8px; max-width: 60%; word-wrap: break-word; }
+    .peer-message { align-self: flex-start; background-color: #ffffff; margin-right: auto; }
+    .my-message { align-self: flex-end; background-color: #dcf8c6; margin-left: auto; }
+    .metadata { font-size: 0.75em; opacity: 0.8; margin-top: 4px; }
+    .input-area { padding: 10px; background-color: #ededed; border-top: 1px solid #ccc; display: flex; gap: 10px; align-items: center; }
+    #msgInput { flex: 1; padding: 8px; font-size: 14px; }
+    #sendBtn { padding: 8px 14px; cursor: pointer; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div class="top-buttons">
+    <button id="connect-btn">Connect Eternl Wallet</button>
+    <button id="refresh-btn">Refresh Conversations</button>
+    <button id="new-msg-btn">New Conversation</button>
+  </div>
+  <span id="status">Not connected</span>
+</div>
+
+<div class="container">
+  <div class="chat-list" id="chatList"></div>
+  <div class="chat-container">
+    <div class="chat-header" id="chatHeader">
+      <h2>Select a Peer...</h2>
+    </div>
+    <div class="messages" id="chatMessages">
+      <p>Open console (F12) for debug logs.</p>
+    </div>
+    <div class="input-area">
+      <input type="text" id="msgInput" placeholder="Type a message..." />
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- We need axios for the calls and Buffer for handle decoding. -->
+<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+<script type="module">
+  import { Lucid, Blockfrost } from "https://esm.sh/lucid-cardano@0.10.7";
+  import { Buffer } from "https://esm.sh/buffer@6.0.3";
+
+  let api = null;
+  let lucid = null;
+  let mainAddress = '';
+  let hexAddr = null;
+  let conversationData = {};
+  let currentPeer = null;
+
+  // We'll store handle names here. Key = bech32 address, Value = e.g. "$myhandle".
+  const peerHandles = {};
+
+  // ------------------ CONFIG ------------------
+  const MAX_LABELS_PER_SIDE = 100;
+  const CHUNK_SIZE_HEX      = 64;
+
+  // ---------- CIP-30 / Lucid Wallet Connection ----------
+  document.getElementById('connect-btn').onclick = connectWallet;
+  document.getElementById('refresh-btn').onclick = refreshConversations;
+  document.getElementById('new-msg-btn').onclick = newConversation;
+  document.getElementById('sendBtn').onclick     = sendMessage;
+
+  // BLOCKFROST KEYS (replace with your own)
+  const BF_PRIMARY_KEY = "mainnetTlEoy5olZ6FkY2aL2ho9PaIGncVMkmV0";  // e.g. "mainnet123"
+  const BF_BACKUP_KEY  = "mainnetTlEoy5olZ6FkY2aL2ho9PaIGncVMkmV0";  // optional fallback
+
+  async function connectWallet() {
+    console.log("[connectWallet] Start");
+    const status = document.getElementById('status');
+
+    if (!window.cardano || !window.cardano.eternl) {
+      alert("Eternl wallet not detected.");
+      return;
+    }
+    try {
+      status.textContent = "Connecting...";
+      api = await window.cardano.eternl.enable();
+      console.log("[connectWallet] CIP-30 enabled");
+
+      const netId = await api.getNetworkId();
+      console.log("[connectWallet] network =", netId === 1 ? "Mainnet" : "Testnet");
+
+      const usedAddrs = await api.getUsedAddresses();
+      if (!usedAddrs || usedAddrs.length === 0) {
+        status.textContent = "No addresses found in wallet.";
+        return;
+      }
+      hexAddr = usedAddrs[0];
+      console.log("[connectWallet] hexAddr =", hexAddr);
+
+      // Create Lucid instance
+      lucid = await Lucid.new(
+        new Blockfrost("https://cardano-mainnet.blockfrost.io/api/v0", "mainnetTlEoy5olZ6FkY2aL2ho9PaIGncVMkmV0"),
+        "Mainnet"
+      );
+      await lucid.selectWallet(api);
+
+      // Fetch conversation data
+      status.textContent = "Fetching conversations...";
+      const res = await fetch(`/conversations?address=${hexAddr}&network=mainnet`);
+      if (!res.ok) throw new Error("Backend request failed");
+      const data = await res.json();
+      console.log("[connectWallet] conv data:", data);
+
+      const addrs = Object.keys(data);
+      if (addrs.length === 0) {
+        status.textContent = "No data for this wallet.";
+        return;
+      }
+      mainAddress = addrs[0];
+      conversationData = data[mainAddress];
+
+      // Look up handles for all peers
+      await resolveAllHandles();
+
+      status.textContent = "Connected: " + shortenAddress(mainAddress);
+      buildPeerList();
+    } catch (err) {
+      console.error("[connectWallet] ERROR:", err);
+      status.textContent = "Not connected";
+      alert("Connection failed: " + err.message);
+    }
+  }
+
+  async function refreshConversations() {
+    console.log("[refreshConversations] Start");
+    if (!hexAddr) {
+      alert("Wallet not connected.");
+      return;
+    }
+    try {
+      const status = document.getElementById('status');
+      status.textContent = "Refreshing...";
+      const res = await fetch(`/conversations?address=${hexAddr}&network=mainnet`);
+      if (!res.ok) throw new Error("Backend request failed");
+      const data = await res.json();
+
+      const addrs = Object.keys(data);
+      if (addrs.length === 0) {
+        status.textContent = "No data found.";
+        return;
+      }
+      mainAddress = addrs[0];
+      conversationData = data[mainAddress];
+      status.textContent = "Refreshed!";
+
+      // Re‐lookup handles for all new peers
+      await resolveAllHandles();
+
+      buildPeerList();
+      if (currentPeer && conversationData[currentPeer]) {
+        displayConversation(currentPeer);
+      }
+    } catch (err) {
+      console.error("[refreshConversations] ERROR:", err);
+      alert("Refresh failed: " + err.message);
+    }
+  }
+
+  function newConversation() {
+    console.log("[newConversation] Start");
+    const newAddr = prompt("Enter peer's bech32 address (addr1...)");
+    if (!newAddr) {
+      alert("No address provided.");
+      return;
+    }
+    if (!newAddr.startsWith("addr1")) {
+      alert("Invalid mainnet address.");
+      return;
+    }
+    if (conversationData[newAddr]) {
+      alert("Already have a conversation with that address.");
+      return;
+    }
+    conversationData[newAddr] = [];
+    alert("Added new conversation. Select it and send a message.");
+
+    // We'll do handle lookup just for that new address
+    getStakeAddress(newAddr).then(stkAddr => {
+      if (!stkAddr) return;
+      fetchHandle(stkAddr).then(hdl => {
+        if (hdl) peerHandles[newAddr] = hdl;
+        buildPeerList();
+      });
+    });
+    buildPeerList();
+  }
+
+  // -------------- HELPER: Lookup Handles for all known peers ---------------
+  async function resolveAllHandles() {
+    const peers = Object.keys(conversationData);
+    for (const addr of peers) {
+      // If we already have a handle in peerHandles, skip
+      if (peerHandles[addr]) continue;
+
+      const stakeAddr = await getStakeAddress(addr);
+      if (!stakeAddr) continue;
+
+      const handle = await fetchHandle(stakeAddr);
+      if (handle) {
+        peerHandles[addr] = handle;
+      }
+    }
+  }
+
+  // -------------- HELPER: Return either the known handle or shortened address ---------------
+  function getPeerDisplayName(addr) {
+    return peerHandles[addr] ? peerHandles[addr] : shortenAddress(addr);
+  }
+
+  // ------------------ Splitting / Merging Logic ------------------
+  function chunkString(str, chunkSize) {
+    const chunks = [];
+    for (let i = 0; i < str.length; i += chunkSize) {
+      chunks.push(str.slice(i, i + chunkSize));
+    }
+    return chunks;
+  }
+
+  // ------------------ Basic Crypto Helpers ------------------
+  async function sha256(str) {
+    const data = new TextEncoder().encode(str);
+    return await crypto.subtle.digest("SHA-256", data);
+  }
+
+  function bufToHex(buffer) {
+    return [...new Uint8Array(buffer)]
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  function hexToBuf(hex) {
+    if (hex.length % 2 !== 0) throw new Error("Invalid hex");
+    const arr = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+      arr[i / 2] = parseInt(hex.substr(i, 2), 16);
+    }
+    return arr.buffer;
+  }
+
+  async function getKeyFromAddress(bech32) {
+    const hashBuf = await sha256(bech32);
+    return await crypto.subtle.importKey(
+      "raw",
+      hashBuf,
+      { name: "AES-GCM" },
+      false,
+      ["encrypt","decrypt"]
+    );
+  }
+
+  async function encryptAES(plaintext, key) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ptBuf = new TextEncoder().encode(plaintext);
+    const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, ptBuf);
+    return bufToHex(iv.buffer) + bufToHex(ctBuf);
+  }
+
+  async function decryptAES(cipherHex, key) {
+    try {
+      const ivHex = cipherHex.slice(0, 24);  // first 12 bytes => 24 hex chars
+      const ctHex = cipherHex.slice(24);
+      const ivBuf = hexToBuf(ivHex);
+      const ctBuf = hexToBuf(ctHex);
+      const ptBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivBuf }, key, ctBuf);
+      return new TextDecoder().decode(ptBuf);
+    } catch (err) {
+      console.error("[decryptAES] fail:", err);
+      return "(Encrypted) [cannot decrypt]";
+    }
+  }
+
+  // ------------------ Sending a Message (Chunked) ------------------
+  async function sendMessage() {
+    console.log("[sendMessage] Start");
+    if (!lucid) {
+      alert("No Lucid / wallet connection.");
+      return;
+    }
+    if (!currentPeer) {
+      alert("No peer selected.");
+      return;
+    }
+
+    const inp = document.getElementById('msgInput');
+    const plaintext = inp.value.trim();
+    if (!plaintext) {
+      alert("Empty message");
+      return;
+    }
+
+    try {
+      const receiverKey = await getKeyFromAddress(currentPeer);
+      const senderKey   = await getKeyFromAddress(mainAddress);
+
+      const cipherForReceiver = await encryptAES(plaintext, receiverKey);
+      const cipherForSender   = await encryptAES(plaintext, senderKey);
+
+      const rcChunks = chunkString(cipherForReceiver, CHUNK_SIZE_HEX);
+      const sdChunks = chunkString(cipherForSender,   CHUNK_SIZE_HEX);
+
+      if (rcChunks.length > MAX_LABELS_PER_SIDE || sdChunks.length > MAX_LABELS_PER_SIDE) {
+        alert(`Message is too large. Needs more than ${MAX_LABELS_PER_SIDE} chunks per side!`);
+        return;
+      }
+
+      let txBuilder = lucid.newTx().payToAddress(currentPeer, { lovelace: 1000000n });
+
+      // For receiver => labels 1..100
+      rcChunks.forEach((chunk, i) => {
+        const label = 1 + i;
+        txBuilder = txBuilder.attachMetadata(label, { msg: [chunk] });
+      });
+
+      // For sender => labels 101..200
+      sdChunks.forEach((chunk, i) => {
+        const label = MAX_LABELS_PER_SIDE + 1 + i;
+        txBuilder = txBuilder.attachMetadata(label, { msg: [chunk] });
+      });
+
+      const completedTx = await txBuilder.complete();
+      const signedTx = await completedTx.sign().complete();
+      const txHash = await signedTx.submit();
+
+      console.log("[sendMessage] TxHash =", txHash);
+      alert("Message sent!\nTxHash: " + txHash);
+      inp.value = '';
+    } catch (err) {
+      console.error("[sendMessage] ERROR:", err);
+      alert("Send failed: " + err.message);
+    }
+  }
+
+  // ------------------ Reading a Message (Unchunking) ------------------
+  function buildPeerList() {
+    const chatListDiv = document.getElementById('chatList');
+    chatListDiv.innerHTML = '';
+
+    const peers = Object.keys(conversationData);
+    if (peers.length === 0) {
+      document.getElementById('chatHeader').innerHTML = '<h2>No conversations</h2>';
+      document.getElementById('chatMessages').innerHTML = '';
+      return;
+    }
+
+    peers.forEach(peerAddr => {
+      const item = document.createElement('div');
+      item.className = 'chat-list-item';
+      // Display handle if known, else short address
+      item.textContent = getPeerDisplayName(peerAddr);
+      item.dataset.fullAddr = peerAddr;
+      item.onclick = () => {
+        document.querySelectorAll('.chat-list-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        currentPeer = peerAddr;
+        displayConversation(peerAddr);
+      };
+      chatListDiv.appendChild(item);
+    });
+  }
+
+  async function displayConversation(peerAddr) {
+    console.log("[displayConversation]", peerAddr);
+    const header = document.getElementById('chatHeader');
+    // Show handle if we have it, else short address
+    header.innerHTML = `<h2>Chat with ${getPeerDisplayName(peerAddr)}</h2>`;
+
+    const msgsDiv = document.getElementById('chatMessages');
+    msgsDiv.innerHTML = '';
+
+    const messages = conversationData[peerAddr] || [];
+    if (messages.length === 0) {
+      msgsDiv.textContent = "No messages here.";
+      return;
+    }
+    messages.sort((a, b) => a.block_time - b.block_time);
+
+    for (const msgObj of messages) {
+      const row = document.createElement('div');
+      row.className = 'message-row';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ' + (msgObj.sender === mainAddress ? 'my-message' : 'peer-message');
+
+      // If I sent => labels 101..200. If I received => 1..100
+      let relevantLabels = [];
+      if (msgObj.sender === mainAddress) {
+        relevantLabels = Array.from({length: MAX_LABELS_PER_SIDE}, (_, i) => MAX_LABELS_PER_SIDE + 1 + i);
+      } else {
+        relevantLabels = Array.from({length: MAX_LABELS_PER_SIDE}, (_, i) => 1 + i);
+      }
+
+      // Gather the chunks
+      const allChunks = [];
+      for (const [lab, ctext] of msgObj.msgs) {
+        if (relevantLabels.includes(lab)) {
+          allChunks.push([lab, ctext]);
+        }
+      }
+      allChunks.sort((a, b) => a[0] - b[0]);
+
+      // Combine them
+      let fullCipherHex = "";
+      for (const [lab, ctext] of allChunks) {
+        fullCipherHex += ctext;
+      }
+
+      // Decrypt
+      let myPlaintext = "(Encrypted) [cannot decrypt]";
+      try {
+        const myKey = await getKeyFromAddress(mainAddress);
+        if (fullCipherHex) {
+          myPlaintext = await decryptAES(fullCipherHex, myKey);
+        }
+      } catch (err) {
+        console.error("[displayConversation] decryption fail:", err);
+      }
+
+      bubble.textContent = myPlaintext;
+
+      // Some message metadata
+      const meta = document.createElement('div');
+      meta.className = 'metadata';
+      const dateStr = new Date(msgObj.block_time * 1000).toLocaleString();
+      meta.textContent = `Tx: ${msgObj.tx_hash.slice(0, 12)}... | ${dateStr} | labels: [${msgObj.msgs.map(m => m[0]).join(", ")}]`;
+      bubble.appendChild(meta);
+
+      row.appendChild(bubble);
+      msgsDiv.appendChild(row);
+    }
+    msgsDiv.scrollTop = msgsDiv.scrollHeight;
+  }
+
+  // ------------------ Minimal Direct Blockfrost Calls (no Node libs) ------------------
+  async function getStakeAddress(addr) {
+    // Try primary first
+    const stake1 = await tryGetStake(addr, BF_PRIMARY_KEY);
+    if (stake1) return stake1;
+    // fallback
+    if (BF_BACKUP_KEY) {
+      console.log("Retrying with backup project key...");
+      return await tryGetStake(addr, BF_BACKUP_KEY);
+    }
+    return null;
+  }
+
+  async function tryGetStake(addr, projectId) {
+    try {
+      const resp = await axios.get(
+        `https://cardano-mainnet.blockfrost.io/api/v0/addresses/${addr}`,
+        { headers: { project_id: projectId }, timeout: 10000 }
+      );
+      if (resp && resp.data && resp.data.stake_address) {
+        return resp.data.stake_address;
+      }
+      return null;
+    } catch (err) {
+      console.error("tryGetStake error:", err);
+      return null;
+    }
+  }
+
+  async function fetchHandle(stakeAddress) {
+    if (!BF_PRIMARY_KEY) return null;
+
+    const baseUrl = `https://cardano-mainnet.blockfrost.io/api/v0/accounts/${stakeAddress}/addresses/assets`;
+    const headers = { 'project_id': BF_PRIMARY_KEY };
+
+    const targetPolicy       = 'f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a';
+    const identifierToRemove = '000de140';
+
+    let page = 1;
+    while (true) {
+      try {
+        const response = await axios.get(`${baseUrl}?page=${page}&count=100`, { headers, timeout: 10000 });
+        const data = response.data;
+        if (!data.length) return null; // no more results
+
+        for (const asset of data) {
+          if (asset.unit.startsWith(targetPolicy)) {
+            let hexName = asset.unit.slice(targetPolicy.length);
+            if (hexName.startsWith(identifierToRemove)) {
+              hexName = hexName.slice(identifierToRemove.length);
+            }
+            try {
+              const asciiName = Buffer.from(hexName, 'hex').toString('utf-8');
+              return `$${asciiName}`;
+            } catch (error) {
+              return null;
+            }
+          }
+        }
+        page++;
+      } catch (err) {
+        console.log("fetchHandle error:", err);
+        return null;
+      }
+    }
+  }
+
+  function shortenAddress(addr) {
+    if (!addr || addr.length < 15) return addr;
+    return addr.slice(0, 6) + "..." + addr.slice(-5);
+  }
+
+</script>
+</body>
+</html>
