@@ -822,15 +822,15 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     }
   };
 
-  // Add this helper function to the file
+  // Update the normalizeEd25519Signature function with more detailed logging
   const normalizeEd25519Signature = (sigHex: string): string => {
     try {
-      console.log("🔎 Starting signature normalization...");
-      console.log("📊 Input signature:", { 
+      console.log("🔎 Starting signature normalization with raw signature:");
+      console.log("📊 RAW INPUT SIGNATURE:", { 
         length: sigHex?.length || 0, 
-        preview: sigHex?.substring(0, 20) + "...",
-        isHex: /^[0-9a-f]+$/i.test(sigHex || ""),
-        bytes: Buffer.from(sigHex || "", 'hex').length
+        hexBytes: Buffer.from(sigHex || "", 'hex').length,
+        rawPreview: sigHex?.substring(0, 40) + "...",
+        isHex: /^[0-9a-f]+$/i.test(sigHex || "")
       });
       
       // Check for null/undefined
@@ -853,9 +853,26 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         sigHex = cleanedSig;
       }
       
-      // Convert to buffer to normalize
+      // Show first 8 bytes of signature for debugging CBOR/COSE format
       const sigBuffer = Buffer.from(sigHex, 'hex');
-      console.log("📊 Converted to buffer:", { bytes: sigBuffer.length });
+      console.log("📊 Signature raw bytes at specific positions:", { 
+        totalBytes: sigBuffer.length,
+        first8Bytes: Array.from(sigBuffer.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' '),
+        last8Bytes: Array.from(sigBuffer.slice(-8)).map(b => b.toString(16).padStart(2, '0')).join(' ')
+      });
+
+      // Detect specific signature formats based on initial bytes
+      // Standard COSE_Sign1 typically starts with 0x84 (array of 4 elements)
+      const isCOSESign1 = sigBuffer[0] === 0x84;
+      // Some wallets include specific signature prefixes
+      const hasEternlPrefix = sigBuffer.slice(0, 4).toString('hex') === '82a366646f6d';
+      
+      console.log("📊 Signature format detection:", {
+        isCOSESign1,
+        hasEternlPrefix,
+        firstByte: sigBuffer[0]?.toString(16),
+        first4Bytes: sigBuffer.slice(0, 4).toString('hex'),
+      });
       
       // Handle different signature formats
       if (sigBuffer.length === 64) {
@@ -863,22 +880,69 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         console.log("✅ Signature is already the correct 64-byte format");
         return sigHex;
       }
-      else if (sigBuffer.length === 70) {
-        // Cardano wallet-specific format that includes metadata
-        // Extract the actual 64-byte signature (bytes 3-66)
-        console.log("🔍 Detected 70-byte signature - extracting 64-byte signature");
+      else if (isCOSESign1 && sigBuffer.length >= 64) {
+        // Standard COSE_Sign1 format with CBOR encoding
+        console.log("🔍 Detected COSE_Sign1 signature - extracting signature data");
+        
+        try {
+          // For COSE_Sign1, signature is the last element (index 3) of the CBOR array
+          // This can vary slightly based on wallet implementation
+          console.log("🧪 Will try to extract signature from COSE_Sign1 structure");
+          
+          // Try common CIP-8 signature extraction pattern (last 64 bytes)
+          const extracted = sigBuffer.slice(sigBuffer.length - 64);
+          console.log("📊 Extracted signature from COSE:", { 
+            bytes: extracted.length,
+            preview: extracted.toString('hex').substring(0, 30) + "..." 
+          });
+          
+          if (extracted.length !== 64) {
+            throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
+          }
+          return extracted.toString('hex');
+        } catch (error) {
+          console.error("❌ Error extracting from COSE:", error);
+          // Fall through to other extraction methods
+        }
+      }
+      else if (hasEternlPrefix && sigBuffer.length >= 70) {
+        // Eternl-specific format
+        console.log("🔍 Detected Eternl-specific signature format (70+ bytes)");
+        // Eternl often puts signature at bytes 3-67
         const extracted = sigBuffer.slice(3, 67);
-        console.log("📊 Extracted signature:", { bytes: extracted.length });
+        console.log("📊 Extracted signature for Eternl format:", { 
+          bytes: extracted.length,
+          preview: extracted.toString('hex').substring(0, 30) + "..." 
+        });
+        
+        if (extracted.length !== 64) {
+          throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
+        }
+        return extracted.toString('hex');
+      }
+      else if (sigBuffer.length === 70) {
+        // Generic 70-byte signature format (common in many wallets)
+        console.log("🔍 Detected 70-byte signature - trying standard extraction at bytes 3-67");
+        const extracted = sigBuffer.slice(3, 67);
+        console.log("📊 Extracted signature from 70 bytes:", { 
+          bytes: extracted.length,
+          preview: extracted.toString('hex').substring(0, 30) + "..." 
+        });
+        
         if (extracted.length !== 64) {
           throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
         }
         return extracted.toString('hex');
       }
       else if (sigBuffer.length === 72) {
-        // Alternative Cardano wallet format
-        console.log("🔍 Detected 72-byte signature - extracting 64-byte signature");
+        // Alternative 72-byte format
+        console.log("🔍 Detected 72-byte signature - trying standard extraction at bytes 4-68");
         const extracted = sigBuffer.slice(4, 68);
-        console.log("📊 Extracted signature:", { bytes: extracted.length });
+        console.log("📊 Extracted signature from 72 bytes:", { 
+          bytes: extracted.length,
+          preview: extracted.toString('hex').substring(0, 30) + "..." 
+        });
+        
         if (extracted.length !== 64) {
           throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
         }
@@ -886,9 +950,13 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       }
       else if (sigBuffer.length > 64) {
         // For other formats, try to extract the last 64 bytes as a fallback
-        console.log(`🔍 Detected ${sigBuffer.length}-byte signature - extracting last 64 bytes`);
+        console.log(`🔍 Detected ${sigBuffer.length}-byte signature - extracting last 64 bytes as fallback`);
         const extracted = sigBuffer.slice(sigBuffer.length - 64);
-        console.log("📊 Extracted signature:", { bytes: extracted.length });
+        console.log("📊 Extracted signature (fallback method):", { 
+          bytes: extracted.length,
+          preview: extracted.toString('hex').substring(0, 30) + "..." 
+        });
+        
         if (extracted.length !== 64) {
           throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
         }
