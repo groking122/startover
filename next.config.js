@@ -22,11 +22,10 @@ const nextConfig = {
     // Avoid SSR issues with browser-specific modules
     if (isServer) {
       config.resolve.fallback = {
-        ...config.resolve.fallback,
         fs: false,
         net: false,
         tls: false,
-        crypto: false,
+        crypto: require.resolve("crypto-browserify"),
       };
     }
 
@@ -38,7 +37,7 @@ const nextConfig = {
 
     return config;
   },
-  // Add special handling for problematic paths
+  // Add special handling for problematic packages
   transpilePackages: ['lucid-cardano', '@emurgo/cardano-serialization-lib-asmjs'],
 }
 
