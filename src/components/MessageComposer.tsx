@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { sendMessage } from '@/utils/client/messageUtils';
 import { useWalletIdentity } from '@/contexts/WalletIdentityContext';
 import { toast } from 'react-hot-toast';
+import { safeLocalStorage } from '@/utils/client/browserUtils';
 
 interface MessageComposerProps {
   onMessageSent?: () => void;
@@ -23,7 +24,7 @@ const MessageComposer: React.FC<MessageComposerProps> = ({ onMessageSent }) => {
   
   // Load the payment address from localStorage when component mounts
   useEffect(() => {
-    const storedPaymentAddress = localStorage.getItem('verifiedPaymentAddress');
+    const storedPaymentAddress = safeLocalStorage.getItem('verifiedPaymentAddress');
     if (storedPaymentAddress) {
       setPaymentAddress(storedPaymentAddress);
     }

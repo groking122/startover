@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import MessageItem from './MessageItem';
 import { fetchMessages } from '@/utils/client/messageUtils';
 import { useWalletIdentity } from '@/contexts/WalletIdentityContext';
+import { safeLocalStorage } from '@/utils/client/browserUtils';
 
 /**
  * Component for displaying a list of messages
@@ -19,7 +20,7 @@ const MessageList: React.FC = () => {
   
   // Load the payment address from localStorage when component mounts
   useEffect(() => {
-    const storedPaymentAddress = localStorage.getItem('verifiedPaymentAddress');
+    const storedPaymentAddress = safeLocalStorage.getItem('verifiedPaymentAddress');
     if (storedPaymentAddress) {
       setPaymentAddress(storedPaymentAddress);
     }

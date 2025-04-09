@@ -9,29 +9,37 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: true,
+  experimental: {
+    // Disable automatic static optimization for the chat page
+    // This is needed because it relies heavily on client-side features
+    optimizeCss: false,
+    esmExternals: 'loose',
+  },
+  // Disable static generation for chat-related pages
+  unstable_runtimeJS: true,
+  // Configure webpack to handle lucid-cardano and other problematic dependencies
   webpack: (config, { isServer }) => {
-    // Enable top-level await
+    // Avoid SSR issues with browser-specific modules
+    if (isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        net: false,
+        tls: false,
+        crypto: false,
+      };
+    }
+
+    // Handle top-level await for lucid-cardano
     config.experiments = {
       ...config.experiments,
       topLevelAwait: true,
     };
 
-    // Properly handle WASM in Lucid Cardano
-    config.resolve.fallback = {
-      ...config.resolve.fallback,
-      fs: false,
-      path: false,
-      os: false,
-      crypto: false,
-    };
-
-    // Ignore warnings from emurgo libraries
-    config.ignoreWarnings = [
-      { module: /node_modules\/@emurgo/ }
-    ];
-
     return config;
   },
+  // Add special handling for problematic paths
+  transpilePackages: ['lucid-cardano', '@emurgo/cardano-serialization-lib-asmjs'],
 }
 
 module.exports = nextConfig; 

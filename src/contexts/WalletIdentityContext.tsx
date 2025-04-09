@@ -12,6 +12,7 @@ import { getAvailableWallets, isWalletEnabled } from '@/utils/walletUtils';
 import type * as CborModule from 'cbor';
 import { toast } from 'react-hot-toast';
 import { useCardano } from '@cardano-foundation/cardano-connect-with-wallet';
+import { safeLocalStorage } from '@/utils/client/browserUtils';
 
 interface WalletIdentityContextType {
   stakeAddress: string | null;
@@ -77,9 +78,9 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     setWalletLocked(false);
     
     // Clear any stored state in localStorage
-    localStorage.removeItem('last_connected_stake_address');
-    localStorage.removeItem("verifiedStakeAddress"); 
-    localStorage.removeItem("verifiedPaymentAddress"); // Also clear payment address
+    safeLocalStorage.removeItem('last_connected_stake_address');
+    safeLocalStorage.removeItem("verifiedStakeAddress"); 
+    safeLocalStorage.removeItem("verifiedPaymentAddress"); // Also clear payment address
     
     console.log("Wallet disconnected, all state reset");
     
@@ -105,7 +106,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
   useEffect(() => {
     if (!stakeAddress) return;
     
-    const cached = localStorage.getItem("verifiedStakeAddress");
+    const cached = safeLocalStorage.getItem("verifiedStakeAddress");
     if (cached && cached === stakeAddress) {
       setIsVerified(true);
       verifiedStakeAddressRef.current = cached;
@@ -527,7 +528,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
           const paymentAddress = await api.getChangeAddress();
           if (paymentAddress) {
             // Store the payment address in localStorage for future security checks
-            localStorage.setItem("verifiedPaymentAddress", paymentAddress);
+            safeLocalStorage.setItem("verifiedPaymentAddress", paymentAddress);
             console.log("✅ Payment address stored for future verification:", 
               paymentAddress.substring(0, 10) + '...');
           }
@@ -536,13 +537,13 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         }
         
         // Store stake address in localStorage
-        localStorage.setItem("verifiedStakeAddress", stakeAddr);
+        safeLocalStorage.setItem("verifiedStakeAddress", stakeAddr);
         console.log("✅ Verification completed at:", new Date().toISOString());
       } else {
         setIsVerified(false);
         verifiedStakeAddressRef.current = null;
         // Clear any existing verification data
-        localStorage.removeItem("verifiedStakeAddress");
+        safeLocalStorage.removeItem("verifiedStakeAddress");
         console.error("❌ Server returned success but verification status is not true");
       }
       
@@ -757,7 +758,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
           const paymentAddress = await api.getChangeAddress();
           if (paymentAddress) {
             // Store the payment address in localStorage for future security checks
-            localStorage.setItem("verifiedPaymentAddress", paymentAddress);
+            safeLocalStorage.setItem("verifiedPaymentAddress", paymentAddress);
             console.log("✅ Payment address stored for future verification:", 
               paymentAddress.substring(0, 10) + '...');
           }
@@ -766,7 +767,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         }
         
         // Store stake address in localStorage
-        localStorage.setItem("verifiedStakeAddress", stakeAddress);
+        safeLocalStorage.setItem("verifiedStakeAddress", stakeAddress);
         console.log("✅ Verification completed at:", new Date().toISOString());
       } catch (verifyError: any) {
         console.error("❌ Verification error:", verifyError);
