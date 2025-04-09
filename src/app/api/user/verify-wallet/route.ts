@@ -23,10 +23,41 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Enhanced signature validation
+    console.log("Received signature data:", {
+      signatureHexLength: signature.length,
+      signatureByteLength: Buffer.from(signature, 'hex').length,
+      pubKeyHexLength: pubKey.length,
+      pubKeyByteLength: Buffer.from(pubKey, 'hex').length,
+      messageHexLength: message.length,
+    });
+
+    // Validate signature size
+    const signatureBuffer = Buffer.from(signature, 'hex');
+    if (signatureBuffer.length !== 64) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Invalid signature size: expected 64 bytes, got ${signatureBuffer.length} bytes`,
+          details: {
+            signatureHexLength: signature.length,
+            signatureByteLength: signatureBuffer.length,
+            signatureHexPreview: signature.substring(0, 30) + '...',
+          }
+        },
+        { status: 400 }
+      );
+    }
+
     // Step 1: Verify the signature is valid for the message using the public key
     try {
       // Decode the original hex message back to JSON
       const messageJson = fromHex(message);
+      console.log("Decoded message from HEX:", {
+        originalHexLength: message.length,
+        decodedJsonLength: messageJson.length,
+        decodedJsonPreview: messageJson.substring(0, 50) + '...'
+      });
       
       // Use our existing verification logic to check the signature
       const isValidSignature = verifySignature(pubKey, signature, messageJson);
@@ -48,7 +79,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Signature verification failed',
+          error: `Signature verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         },
         { status: 400 }
       );

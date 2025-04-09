@@ -288,6 +288,15 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         signatureLength: result.signature?.length || 0,
       });
       
+      // Debug log: check the raw signature format
+      console.log("🔍 Raw signature details:", {
+        type: typeof result.signature,
+        hexLength: result.signature?.length || 0,
+        byteLength: Buffer.from(result.signature || "", 'hex').length,
+        isValidHex: /^[0-9a-f]+$/i.test(result.signature || ""),
+        preview: result.signature?.substring(0, 30) + "..."
+      });
+      
       // We'll use the original JSON for logging but send hex to the backend
       console.log("📝 Message for verification (JSON):", messageJson.substring(0, 30) + "...");
       
@@ -813,15 +822,9 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       console.log("📊 Input signature:", { 
         length: sigHex?.length || 0, 
         preview: sigHex?.substring(0, 20) + "...",
-        isHex: /^[0-9a-f]+$/i.test(sigHex || "") 
+        isHex: /^[0-9a-f]+$/i.test(sigHex || ""),
+        bytes: Buffer.from(sigHex || "", 'hex').length
       });
-      
-      // If the signature is already valid and is 128 or 140 characters, return it as-is
-      // Some wallets produce 140-character signatures that should not be trimmed
-      if (sigHex && (sigHex.length === 128 || sigHex.length === 140) && /^[0-9a-f]+$/i.test(sigHex)) {
-        console.log(`✅ Signature is already a valid format (${sigHex.length} hex chars) - preserving original format`);
-        return sigHex;
-      }
       
       // Check for null/undefined
       if (!sigHex) {
@@ -843,27 +846,50 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         sigHex = cleanedSig;
       }
       
-      // For 140-character signatures, special case - don't trim them
-      if (sigHex.length === 140) {
-        console.log("🔍 Detected 140-character signature - keeping original format");
-        return sigHex;
-      }
-      
       // Convert to buffer to normalize
       const sigBuffer = Buffer.from(sigHex, 'hex');
       console.log("📊 Converted to buffer:", { bytes: sigBuffer.length });
       
-      // Special handling for longer signatures that aren't 140 characters
-      // Don't aggressively trim unusual signatures
-      if (sigBuffer.length > 64 && sigHex.length !== 140) {
-        // Check if it's the expected Cardano signature length
-        if (sigBuffer.length === 70) {
-          console.log(`✅ Signature is already a valid Cardano signature format`);
-          return sigHex;
+      // Handle different signature formats
+      if (sigBuffer.length === 64) {
+        // Already the correct size - this is what we want
+        console.log("✅ Signature is already the correct 64-byte format");
+        return sigHex;
+      }
+      else if (sigBuffer.length === 70) {
+        // Cardano wallet-specific format that includes metadata
+        // Extract the actual 64-byte signature (bytes 3-66)
+        console.log("🔍 Detected 70-byte signature - extracting 64-byte signature");
+        const extracted = sigBuffer.slice(3, 67);
+        console.log("📊 Extracted signature:", { bytes: extracted.length });
+        if (extracted.length !== 64) {
+          throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
         }
+        return extracted.toString('hex');
+      }
+      else if (sigBuffer.length === 72) {
+        // Alternative Cardano wallet format
+        console.log("🔍 Detected 72-byte signature - extracting 64-byte signature");
+        const extracted = sigBuffer.slice(4, 68);
+        console.log("📊 Extracted signature:", { bytes: extracted.length });
+        if (extracted.length !== 64) {
+          throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
+        }
+        return extracted.toString('hex');
+      }
+      else if (sigBuffer.length > 64) {
+        // For other formats, try to extract the last 64 bytes as a fallback
+        console.log(`🔍 Detected ${sigBuffer.length}-byte signature - extracting last 64 bytes`);
+        const extracted = sigBuffer.slice(sigBuffer.length - 64);
+        console.log("📊 Extracted signature:", { bytes: extracted.length });
+        if (extracted.length !== 64) {
+          throw new Error(`Extracted signature length is ${extracted.length} bytes, expected 64`);
+        }
+        return extracted.toString('hex');
       }
       
-      return sigHex;
+      // If we couldn't extract a 64-byte signature
+      throw new Error(`Invalid signature length: ${sigBuffer.length} bytes. Must be exactly 64 bytes.`);
     } catch (error) {
       console.error("❌ Signature normalization error:", error);
       throw error;
