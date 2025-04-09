@@ -38,16 +38,20 @@ const nextConfig = {
       asyncWebAssembly: true,
     }
 
-    // Configure proper MIME type for wasm files
+    // Configure proper MIME type for wasm files using the standard loader
     config.module.rules.push({
       test: /\.wasm$/,
-      type: 'asset/resource',
+      type: 'webassembly/async',
     })
 
     return config;
   },
   // Add special handling for problematic packages
-  transpilePackages: ['lucid-cardano', '@emurgo/cardano-serialization-lib-asmjs'],
+  transpilePackages: [
+    'lucid-cardano', 
+    '@emurgo/cardano-serialization-lib-asmjs',
+    '@emurgo/cardano-message-signing-nodejs'
+  ],
 }
 
 module.exports = nextConfig; 
