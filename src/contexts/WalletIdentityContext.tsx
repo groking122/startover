@@ -78,7 +78,8 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
     
     // Clear any stored state in localStorage
     localStorage.removeItem('last_connected_stake_address');
-    localStorage.removeItem("verifiedStakeAddress"); // Clear verification cache
+    localStorage.removeItem("verifiedStakeAddress"); 
+    localStorage.removeItem("verifiedPaymentAddress"); // Also clear payment address
     
     console.log("Wallet disconnected, all state reset");
     
@@ -254,21 +255,18 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
   // Create a function to handle wallet identity verification
   const verifyWalletIdentity = async (stakeAddr: string, api: any) => {
     try {
-      // Get payment addresses
-      const usedAddresses = await api.getUsedAddresses();
-      console.log("📦 usedAddresses =", usedAddresses);
+      // Get the payment address (more secure than using stake address)
+      const paymentAddress = await api.getChangeAddress();
+      console.log("📦 paymentAddress =", paymentAddress);
       
-      if (!usedAddresses || usedAddresses.length === 0) {
-        throw new Error("No used addresses available");
+      if (!paymentAddress) {
+        throw new Error("No payment address available");
       }
 
-      // Get the first payment address (hex format)
-      const paymentAddressHex = usedAddresses[0];
-      
-      // Create a message to sign - include the current timestamp and stake address
+      // Create a message to sign - include the current timestamp and payment address
       const messageObject = {
-        stakeAddress: stakeAddr,
-        timestamp: new Date().toISOString(),
+        paymentAddress,
+        timestamp: Date.now(),
         action: 'verify_wallet'
       };
       
@@ -276,23 +274,15 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       const messageJson = JSON.stringify(messageObject);
       console.log("📝 Original JSON message:", messageJson);
       
-      // Most Cardano wallets require the message in hex format for signing
-      const messageHex = Buffer.from(messageJson).toString('hex');
-      console.log("📝 Message converted to hex for signing:", messageHex);
-      console.log("📤 messageHex (to sign):", messageHex);
-      
-      // Sign the message with the payment address (using hex format)
+      // Sign the message with the payment address
       console.log("⏳ Requesting wallet to sign data...");
-      console.log("📤 messageHex (signed by wallet):", messageHex);
-      const result = await api.signData(paymentAddressHex, messageHex);
+      const result = await api.signData(paymentAddress, messageJson);
       console.log("✅ Received sign result from wallet:", {
         keyLength: result.key?.length || 0,
         signatureLength: result.signature?.length || 0,
       });
       
-      // Important: for verification we need to use the ORIGINAL message that was signed
-      // The wallet likely decoded the hex back to original JSON bytes before signing
-      const message = messageJson; // Use the original JSON, not the hex string
+      const message = messageJson; // Use the original JSON
       console.log("📝 Message for verification (JSON):", message.substring(0, 30) + "...");
       
       // The public key from wallet may be CBOR encoded
@@ -444,83 +434,26 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       console.log("🔑 Final public key hex:", publicKeyHex);
       console.log("🔢 Payload sizes:", {
         stakeAddress: stakeAddr.length,
+        paymentAddress: paymentAddress.length,
         publicKey: publicKeyHex.length,
         rawSignature: rawSignatureHex.length,
         normalizedSignature: normalizedSignature.length,
         message: message.length,
       });
 
-      // Run a debug check first to diagnose any issues
-      let bestVerificationMethod = "";
-      try {
-        console.log("🔍 Running verification debug check...");
-        const debugResponse = await fetch('/api/user/verify-debug', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            stakeAddress: stakeAddr,
-            publicKey: publicKeyHex,
-            signature: normalizedSignature,
-            message
-          }),
-        });
-        
-        const debugResult = await debugResponse.json();
-        console.log("📊 Debug verification results:", debugResult);
-        
-        // Find which verification method succeeded
-        const verificationResults = debugResult.verificationResults || {};
-        for (const [method, result] of Object.entries(verificationResults)) {
-          // Type check to avoid TypeScript errors
-          if (result && typeof result === 'object' && 'valid' in result && result.valid === true) {
-            bestVerificationMethod = method;
-            console.log(`✅ Found working verification method: ${method}`);
-            break;
-          }
-        }
-          
-        if (bestVerificationMethod) {
-          console.log("✅ Debug verification found a valid combination!");
-        } else {
-          console.warn("⚠️ Debug verification failed to find a valid combination");
-        }
-      } catch (debugError) {
-        console.error("❌ Debug verification error:", debugError);
-      }
-
-      // Make actual API call to validate the signature with the best method found
-      console.log("📤 Making actual verification request");
-      const apiUrl = bestVerificationMethod 
-        ? `/api/user/verify?method=${bestVerificationMethod}&stakeAddress=${encodeURIComponent(stakeAddr)}` 
-        : `/api/user/verify?stakeAddress=${encodeURIComponent(stakeAddr)}`;
+      // Make actual API call to validate the signature
+      console.log("📤 Making verification request with payment address");
+      const apiUrl = `/api/user/verify-wallet`;
         
       // Log the exact payload being sent to the API
       console.log("📦 Verification API payload:", {
-        stakeAddress: stakeAddr.substring(0, 10) + "...",
+        paymentAddress,
+        stakeAddress: stakeAddr.substring(0, 10) + "...", // Send stake address for reference
         pubKeyLength: publicKeyHex.length,
-        signatureLength: result.signature.length,
+        signatureLength: normalizedSignature.length,
         messageLength: message.length,
         messageFirst20Chars: message.substring(0, 20) + "...",
         apiUrl
-      });
-      
-      // IMPORTANT FINAL TEST: Compare what's being signed vs what's being verified
-      console.log("🧪 VERIFICATION TEST");
-      console.log("🧪 Original JSON (signed):", messageJson.substring(0, 40) + "...");
-      console.log("🧪 Message being sent (verify):", message.substring(0, 40) + "...");
-      console.log("🧪 messageHex (sent to wallet):", messageHex.substring(0, 40) + "...");
-      console.log("🧪 Raw signature (hex):", {
-        length: normalizedSignature.length,
-        bytes: Buffer.from(normalizedSignature, 'hex').length,
-        excerpt: normalizedSignature.substring(0, 32) + "..."
-      });
-      console.log("🧪 Public key (hex):", {
-        length: publicKeyHex.length,
-        bytes: Buffer.from(publicKeyHex, 'hex').length,
-        value: publicKeyHex
       });
       
       const response = await fetch(apiUrl, {
@@ -531,9 +464,10 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
           'X-Requested-With': 'XMLHttpRequest'
         },
         body: JSON.stringify({
-          stakeAddress: stakeAddr,
+          paymentAddress,
+          stakeAddress: stakeAddr, // Include stake address for the backend
           pubKey: publicKeyHex,
-          signature: result.signature, // Send the original signature from the wallet
+          signature: normalizedSignature,
           message
         }),
       });
@@ -582,15 +516,28 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
       const verifyResult = await response.json();
       console.log("✅ Verification result:", verifyResult);
       
-      // Update verification status based on API response (check verified field from response)
-      if (verifyResult.verified) {
+      // Update verification status based on API response
+      if (verifyResult.success) {
         setIsVerified(true);
         verifiedStakeAddressRef.current = stakeAddr;
         latestStakeAddressRef.current = stakeAddr;
-        // Ensure verification status is persisted in localStorage for stability
+        
+        // Get and store the payment address for future reference
+        try {
+          const paymentAddress = await api.getChangeAddress();
+          if (paymentAddress) {
+            // Store the payment address in localStorage for future security checks
+            localStorage.setItem("verifiedPaymentAddress", paymentAddress);
+            console.log("✅ Payment address stored for future verification:", 
+              paymentAddress.substring(0, 10) + '...');
+          }
+        } catch (paymentError) {
+          console.warn("⚠️ Could not store payment address:", paymentError);
+        }
+        
+        // Store stake address in localStorage
         localStorage.setItem("verifiedStakeAddress", stakeAddr);
-        console.log("✅ Verified at:", new Date().toISOString());
-        console.log("✅ Verification status saved to localStorage for persistence");
+        console.log("✅ Verification completed at:", new Date().toISOString());
       } else {
         setIsVerified(false);
         verifiedStakeAddressRef.current = null;
@@ -804,7 +751,23 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         setIsVerified(true);
         verifiedStakeAddressRef.current = stakeAddress;
         latestStakeAddressRef.current = stakeAddress;
+        
+        // Get and store the payment address for future reference
+        try {
+          const paymentAddress = await api.getChangeAddress();
+          if (paymentAddress) {
+            // Store the payment address in localStorage for future security checks
+            localStorage.setItem("verifiedPaymentAddress", paymentAddress);
+            console.log("✅ Payment address stored for future verification:", 
+              paymentAddress.substring(0, 10) + '...');
+          }
+        } catch (paymentError) {
+          console.warn("⚠️ Could not store payment address:", paymentError);
+        }
+        
+        // Store stake address in localStorage
         localStorage.setItem("verifiedStakeAddress", stakeAddress);
+        console.log("✅ Verification completed at:", new Date().toISOString());
       } catch (verifyError: any) {
         console.error("❌ Verification error:", verifyError);
         
