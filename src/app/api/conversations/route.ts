@@ -21,7 +21,7 @@ const RATE_LIMIT_WINDOW_SEC = 60;
  */
 export async function GET(request: NextRequest): Promise<NextResponse<GetConversationsResponse>> {
   // Get the requesting user's stake address from the header
-  const headersList = headers();
+  const headersList = await headers();
   const stakeAddress = headersList.get('x-stake-address');
   
   // Validate authentication

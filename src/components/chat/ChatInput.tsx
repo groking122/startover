@@ -11,6 +11,7 @@ import {
 } from '@/utils/client/stakeUtils';
 import { sendMessage } from '@/utils/messageApi';
 import { MessageApiError } from '@/types/messages';
+import VerifyWalletButton from '../VerifyWalletButton';
 
 interface ChatInputProps {
   recipient: string;
@@ -20,13 +21,13 @@ interface ChatInputProps {
 export default function ChatInput({ recipient, onMessageSent }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const { stakeAddress, isVerified, usedAddresses, verifyWalletIdentityManually } = useWalletIdentity();
+  const { publicAddress, isVerified, usedAddresses } = useWalletIdentity();
   const { enabledWallet } = useCardano();
 
   const handleSend = async () => {
-    console.log('Send button clicked', { stakeAddress, isVerified, recipientValid: isValidCardanoAddress(recipient) });
+    console.log('Send button clicked', { publicAddress, isVerified, recipientValid: isValidCardanoAddress(recipient) });
     
-    if (!message.trim() || !stakeAddress) {
+    if (!message.trim() || !publicAddress) {
       toast.error('Please connect your wallet and enter a message');
       return;
     }
@@ -65,7 +66,7 @@ export default function ChatInput({ recipient, onMessageSent }: ChatInputProps) 
             const walletStakeAddr = await convertStakeAddressHexToBech32(rewardAddrs[0]);
             
             // Check if the recipient is one of our addresses
-            if (walletStakeAddr && (recipient === walletStakeAddr || recipient === stakeAddress)) {
+            if (walletStakeAddr && (recipient === walletStakeAddr || recipient === publicAddress)) {
               console.log('Recipient is the current wallet, using wallet stake address');
               toStake = walletStakeAddr;
             }
@@ -104,7 +105,7 @@ export default function ChatInput({ recipient, onMessageSent }: ChatInputProps) 
         original: recipient,
         isBase,
         resolved: toStake,
-        sender: stakeAddress
+        sender: publicAddress
       });
       
       // Send message using the messageApi utility
@@ -149,28 +150,18 @@ export default function ChatInput({ recipient, onMessageSent }: ChatInputProps) 
 
   return (
     <div className="p-3 bg-gray-800 border-t border-gray-700 flex flex-col">
-      {/* Show re-verify button when needed */}
-      {stakeAddress && !isVerified && (
+      {/* Show verification button when needed */}
+      {publicAddress && !isVerified && (
         <div className="bg-yellow-900 bg-opacity-40 p-2 rounded mb-2 flex items-center justify-between">
           <span className="text-yellow-200 text-sm">Wallet needs verification to send messages</span>
-          <button
-            onClick={verifyWalletIdentityManually}
-            className="px-2 py-1 bg-yellow-700 text-yellow-100 text-xs rounded hover:bg-yellow-600 transition-colors"
-          >
-            Verify Now
-          </button>
+          <VerifyWalletButton variant="small" />
         </div>
       )}
 
-      {/* Server error message if we got an HTML response */}
-      {stakeAddress && isVerified && (
+      {/* Re-verify option when already verified */}
+      {publicAddress && isVerified && (
         <div className="text-right mb-1">
-          <button
-            onClick={verifyWalletIdentityManually}
-            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-          >
-            Re-verify wallet
-          </button>
+          <VerifyWalletButton variant="small" className="text-xs text-blue-400 hover:text-blue-300 transition-colors" />
         </div>
       )}
 
@@ -182,12 +173,12 @@ export default function ChatInput({ recipient, onMessageSent }: ChatInputProps) 
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-          disabled={loading || !stakeAddress}
+          disabled={loading || !publicAddress}
         />
         <button
           className="bg-blue-600 text-white rounded-r-md px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 transition-colors"
           onClick={handleSend}
-          disabled={loading || !message.trim() || !stakeAddress || !isVerified}
+          disabled={loading || !message.trim() || !publicAddress || !isVerified}
         >
           {loading ? (
             <div className="h-5 w-5 border-t-2 border-white rounded-full animate-spin" />
