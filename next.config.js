@@ -14,13 +14,8 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   // Ensure we handle the build of specific packages properly
-  transpilePackages: ['@cardano-sdk/cip30', '@cardano-sdk/core', '@cardano-sdk/util'],
-  // Configure external packages that shouldn't be bundled
-  experimental: {
-    // This is necessary to handle cardano libraries that access window
-    serverExternalPackages: ['lucid-cardano']
-  },
-  // Ensure we do proper handling of lucid-cardano's usage of topLevelAwait
+  transpilePackages: ['@cardano-sdk/cip30', '@cardano-sdk/core', '@cardano-sdk/util', 'lucid-cardano'],
+  // Configure webpack to handle topLevelAwait
   webpack: (config) => {
     config.experiments = {
       ...config.experiments,
