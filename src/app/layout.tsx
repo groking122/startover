@@ -2,10 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ClientOnlyWalletProviders from "@/components/providers/ClientOnlyWalletProviders";
-import dynamic from "next/dynamic";
-
-// Import Header with no SSR to avoid hydration issues with wallet components
-const Header = dynamic(() => import("@/components/Header"), { ssr: false });
+import ClientHeader from "@/components/ClientHeader";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -33,7 +30,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ClientOnlyWalletProviders>
-          <Header />
+          <ClientHeader />
           {children}
         </ClientOnlyWalletProviders>
       </body>
