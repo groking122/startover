@@ -288,8 +288,8 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         signatureLength: result.signature?.length || 0,
       });
       
-      const message = messageJson; // Use the original JSON
-      console.log("📝 Message for verification (JSON):", message.substring(0, 30) + "...");
+      // We'll use the original JSON for logging but send hex to the backend
+      console.log("📝 Message for verification (JSON):", messageJson.substring(0, 30) + "...");
       
       // The public key from wallet may be CBOR encoded
       console.log("🔑 Raw wallet public key:", result.key);
@@ -444,7 +444,8 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         publicKey: publicKeyHex.length,
         rawSignature: rawSignatureHex.length,
         normalizedSignature: normalizedSignature.length,
-        message: message.length,
+        messageJson: messageJson.length,
+        messageHex: messageHex.length
       });
 
       // Make actual API call to validate the signature
@@ -457,8 +458,8 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
         stakeAddress: stakeAddr.substring(0, 10) + "...", // Send stake address for reference
         pubKeyLength: publicKeyHex.length,
         signatureLength: normalizedSignature.length,
-        messageLength: message.length,
-        messageFirst20Chars: message.substring(0, 20) + "...",
+        messageLength: messageHex.length,
+        messageFirst20Chars: messageHex.substring(0, 20) + "...",
         apiUrl
       });
       
@@ -474,7 +475,7 @@ export const WalletIdentityProvider: React.FC<{children: React.ReactNode}> = ({ 
           stakeAddress: stakeAddr, // Include stake address for the backend
           pubKey: publicKeyHex,
           signature: normalizedSignature,
-          message
+          message: messageHex // Send the hex-encoded message that was signed
         }),
       });
 
